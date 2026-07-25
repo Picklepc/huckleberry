@@ -56,6 +56,11 @@ updating this file.
   complexity is justified (Mervyns notes live-reads usually beat on-device
   history).
 
+## Future provisions (not started)
+- **USB-host trailer camera**: power the board via 5V (debug header) to free the
+  USB-C for USB host; composite cam → USB capture (UVC/MJPEG) → ESP32-S3 → MJPEG
+  web stream + optional on-device Camera tile. See [HARDWARE.md](HARDWARE.md).
+
 ## Ongoing — Release process
 - Run `RELEASE_CHECKLIST.md` every major milestone; keep GitHub history; update
   README/CHANGELOG; keep secrets out of git.

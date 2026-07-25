@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <DNSServer.h>
+#include <ArduinoOTA.h>
 #include <time.h>
 #include <sys/time.h>
 
@@ -13,6 +14,7 @@ namespace net {
 static DNSServer  s_dns;
 static bool       s_dnsUp = false;
 static bool       s_mdnsUp = false;
+static bool       s_otaUp = false;
 static bool       s_ntpConfigured = false;
 static const uint32_t ATTEMPT_MS = 9000;   // per-network join timeout
 static int        s_curIdx = -1;           // network we're currently trying
@@ -78,6 +80,13 @@ void loop() {
     if (!s_mdnsUp) {
       if (MDNS.begin(gSettings.hostname.c_str())) { MDNS.addService("http", "tcp", 80); s_mdnsUp = true; }
     }
+    if (!s_otaUp) {   // PlatformIO/espota over Wi-Fi from any dev machine
+      ArduinoOTA.setHostname(gSettings.hostname.c_str());
+      ArduinoOTA.setPassword("huckleberry");
+      ArduinoOTA.begin();
+      s_otaUp = true;
+    }
+    ArduinoOTA.handle();
     if (timeIsValid() && gNet.timeSource == "build") { gNet.timeSynced = true; gNet.timeSource = "ntp"; }
   } else {
     gNet.ssid = "";

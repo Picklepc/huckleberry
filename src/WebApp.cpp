@@ -7,9 +7,12 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <ArduinoJson.h>
+#include <Update.h>
 #include <time.h>
 
 namespace web {
+
+#define FW_VERSION "v0.2.0-b2"   // bumped to verify OTA over Wi-Fi
 
 static WebServer server(80);
 
@@ -93,7 +96,9 @@ details summary{cursor:pointer;color:var(--acc);letter-spacing:2px;font-size:13p
   <label style="margin-top:10px">Storing protection (°F) — used in Storing mode</label>
   <div class="grid"><div><label>Heat below</label><input id="stMin" type="number" min="20" max="60" onchange="save()"></div>
    <div><label>Cool above</label><input id="stMax" type="number" min="70" max="110" onchange="save()"></div></div>
-  <p class="k" style="margin-top:10px">BLE device discovery &amp; firmware (OTA) updates coming next.</p>
+  <label style="margin-top:12px">Firmware</label>
+  <a href="/update"><button class="acc" style="width:100%">Update firmware (OTA)</button></a>
+  <p class="k" style="margin-top:8px">BLE device discovery coming next.</p>
  </details></div>
 </div>
 <script>
@@ -182,6 +187,7 @@ static void handleState() {
   st["stMin"] = gSettings.storeMinF; st["stMax"] = gSettings.storeMaxF;
   auto themes = d["themes"].to<JsonArray>();
   for (size_t i = 0; i < HUCK_THEME_COUNT; i++) themes.add(HUCK_THEMES[i].name);
+  d["fw"] = FW_VERSION;
   // wall clock
   if (net::timeIsValid()) {
     time_t now = time(nullptr); struct tm lt; localtime_r(&now, &lt);
@@ -238,6 +244,27 @@ static void handleTime() {
   server.send(200, "text/plain", "ok");
 }
 
+// ---- OTA firmware update (browser upload of a .bin) ----
+static const char UPDATE_HTML[] PROGMEM = R"HTML(<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Huckleberry firmware</title><body style="font-family:system-ui;background:#0b0805;color:#cbb38c;padding:24px">
+<h2 style="color:#F4791F">Firmware update</h2>
+<p>Current: <b>v0.2.0-b1</b>. Upload <code>.pio/build/huckleberry/firmware.bin</code>.</p>
+<form method=POST action=/update enctype=multipart/form-data>
+<input type=file name=fw accept=".bin" style="color:#cbb38c"><br><br>
+<input type=submit value="Flash &amp; reboot" style="background:#F4791F;color:#1a0f00;border:0;border-radius:8px;padding:10px 16px;font-size:16px">
+</form><p style="color:#8a7c63">Or over Wi-Fi: <code>pio run -e huckleberry_ota -t upload</code></p></body>)HTML";
+
+static void otaUpload() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    Update.begin(UPDATE_SIZE_UNKNOWN);
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    Update.write(up.buf, up.currentSize);
+  } else if (up.status == UPLOAD_FILE_END) {
+    Update.end(true);
+  }
+}
+
 void begin() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html", PAGE); });
   server.on("/api/state", HTTP_GET, handleState);
@@ -245,6 +272,13 @@ void begin() {
   server.on("/api/wifi/add", HTTP_POST, handleWifiAdd);
   server.on("/api/wifi/remove", HTTP_POST, handleWifiRemove);
   server.on("/api/time", HTTP_POST, handleTime);
+  server.on("/update", HTTP_GET, [] { server.send_P(200, "text/html", UPDATE_HTML); });
+  server.on("/update", HTTP_POST, [] {
+    bool ok = !Update.hasError();
+    server.send(200, "text/html", ok ? "<h3>Update OK — rebooting…</h3>" : "<h3>Update FAILED</h3>");
+    delay(600);
+    ESP.restart();
+  }, otaUpload);
   server.onNotFound([] {  // captive-portal friendliness in AP mode
     server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/");
     server.send(302, "text/plain", "");

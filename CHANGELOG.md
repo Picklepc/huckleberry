@@ -9,6 +9,12 @@
   (wake on touch), and storing protection limits — all in web Settings.
 - BLE robustness: 90% scan duty for weak adverts, battery connect retries,
   case-insensitive MAC match, rate-limited health logging.
+- OTA firmware updates: browser uploader at `/update` + PlatformIO-over-Wi-Fi
+  (`pio run -e huckleberry_ota -t upload`, ArduinoOTA). Firmware version in
+  `/api/state`. Enables remote development without USB.
+- Docs: DESIGN.md (UI/UX goals; night clock locked; day-mode redesign; layout
+  system), HARDWARE.md (GPIO/debug pinout, 5V power input, USB-host camera
+  provision), HANDOFF.md (resume-on-another-device prompt).
 
 ## v0.2.0-b1 — Connectivity & live telemetry (M1)
 - Wi-Fi STA + always-on `Huckleberry` AP, captive DNS, mDNS.

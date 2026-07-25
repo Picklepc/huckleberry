@@ -35,7 +35,6 @@ static huck::LGFX lcd;
 static constexpr int SCR_W = 320;
 static constexpr int SCR_H = 240;
 static constexpr int BUF_LINES = 40;
-static constexpr uint32_t HOME_TIMEOUT_MS = 60000;  // 1-min return-to-clock
 
 static lv_color_t lvbuf1[SCR_W * BUF_LINES];
 static lv_color_t lvbuf2[SCR_W * BUF_LINES];
@@ -159,10 +158,35 @@ static void mkFlower(lv_obj_t* parent, int cx, int cy, int petalR,
 }
 
 // ------------------------------------------------------------------ theming
+// True if hour h falls in [start,end), wrapping past midnight when start>end.
+static bool hourInWindow(int h, int start, int end) {
+  if (start == end) return false;
+  return (start < end) ? (h >= start && h < end) : (h >= start || h < end);
+}
+static bool computeNight(int hour) {
+  return gSettings.autoNight && hourInWindow(hour, gSettings.nightStartHour, gSettings.nightEndHour);
+}
+
 static void setBrightnessForPage() {
   bool homeNight = gNightNow && activeTileIndex() == 0;
   int dayB = gSettings.dayBrightness > 0 ? gSettings.dayBrightness : dayTheme().brightness;
-  lcd.setBrightness(homeNight ? HUCK_NIGHT_THEME.brightness : dayB);
+  lcd.setBrightness(homeNight ? gSettings.nightBrightness : dayB);
+}
+
+// Scheduled display-off: blank the backlight during the off-window after a short
+// inactivity, and wake on touch (inactivity resets when the screen is touched).
+static void updateDisplayPower() {
+  static bool blanked = false;
+  time_t now = time(nullptr); struct tm lt; localtime_r(&now, &lt);
+  bool offWindow = gSettings.dispOffEnable &&
+                   hourInWindow(lt.tm_hour, gSettings.dispOffStartHour, gSettings.dispOffEndHour);
+  bool inactive = lv_disp_get_inactive_time(nullptr) > 15000;
+  if (offWindow && inactive) {
+    if (!blanked) { lcd.setBrightness(0); blanked = true; }
+  } else if (blanked) {
+    blanked = false;
+    setBrightnessForPage();
+  }
 }
 
 // Night mode keeps the home page minimal: clock + date only. Everything
@@ -420,7 +444,7 @@ static void updateClock() {
   struct tm lt;
   localtime_r(&now, &lt);
 
-  bool night = huck_is_night(lt.tm_hour);
+  bool night = computeNight(lt.tm_hour);
   if (night != gNightNow) { gNightNow = night; applyHomeTheme(); setBrightnessForPage(); }
 
   int h12 = lt.tm_hour % 12; if (h12 == 0) h12 = 12;
@@ -485,6 +509,8 @@ static void applyUiChangesIfRequested() {
   gDayThemeIdx = gSettings.dayThemeIdx;
   if (gDayThemeIdx < 0 || (size_t)gDayThemeIdx >= HUCK_THEME_COUNT) gDayThemeIdx = 0;
   if (gThermoSetLabel) lv_label_set_text_fmt(gThermoSetLabel, "%d°", gSettings.setpointF);
+  time_t now = time(nullptr); struct tm lt; localtime_r(&now, &lt);
+  gNightNow = computeNight(lt.tm_hour);   // reflect new night-window/autoNight now
   applyAllThemes();
 }
 
@@ -498,17 +524,19 @@ void loop() {
   web::loop();
   applyUiChangesIfRequested();
 
-  if (now - lastSec >= 250) {   // clock + colon refresh
+  if (now - lastSec >= 250) {   // clock + colon refresh + display power
     lastSec = now;
     updateClock();
+    updateDisplayPower();
   }
   if (now - lastData >= 1000) { // live telemetry -> tiles
     lastData = now;
     updateDataTiles();
   }
 
-  // 1-minute inactivity -> snap back to the home clock page.
-  if (activeTileIndex() != 0 && lv_disp_get_inactive_time(nullptr) > HOME_TIMEOUT_MS) {
+  // Inactivity -> snap back to the home clock page (configurable).
+  uint32_t timeoutMs = (uint32_t)(gSettings.homeTimeoutSec > 0 ? gSettings.homeTimeoutSec : 60) * 1000;
+  if (activeTileIndex() != 0 && lv_disp_get_inactive_time(nullptr) > timeoutMs) {
     lv_obj_set_tile_id(gTileview, 0, 0, LV_ANIM_ON);
   }
 

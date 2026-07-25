@@ -86,10 +86,16 @@ static void handleVictronAdv(const NimBLEAdvertisedDevice* dev) {
 }
 
 // ---- scan callbacks ----
+static volatile uint32_t s_advSeen = 0;      // total adverts this cycle
+static volatile uint32_t s_victronSeen = 0;  // adverts from the Victron MAC
 class ScanCB : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* dev) override {
-    if (dev->getAddress().toString() == std::string(gSettings.victronMac.c_str()))
-      handleVictronAdv(dev);
+    s_advSeen++;
+    std::string want = std::string(gSettings.victronMac.c_str());
+    for (auto& c : want) c = tolower(c);
+    std::string got = dev->getAddress().toString();
+    for (auto& c : got) c = tolower(c);
+    if (got == want) { s_victronSeen++; handleVictronAdv(dev); }
   }
 };
 
@@ -125,9 +131,11 @@ static void parseJbdBasic(const std::vector<uint8_t>& d) {
 static void pollBattery() {
   if (gSettings.batteryMac.isEmpty()) return;
   NimBLEClient* c = NimBLEDevice::createClient();
-  c->setConnectTimeout(6 * 1000);
-  bool ok = c->connect(NimBLEAddress(std::string(gSettings.batteryMac.c_str()), BLE_ADDR_PUBLIC));
-  if (!ok) { NimBLEDevice::deleteClient(c); return; }
+  c->setConnectTimeout(8 * 1000);
+  NimBLEAddress addr(std::string(gSettings.batteryMac.c_str()), BLE_ADDR_PUBLIC);
+  bool ok = false;
+  for (int t = 0; t < 2 && !ok; t++) ok = c->connect(addr);   // retry marginal links
+  if (!ok) { Serial.println("[BLE] batt connect FAILED"); NimBLEDevice::deleteClient(c); return; }
   NimBLERemoteService* svc = c->getService(JBD_SVC);
   if (svc) {
     NimBLERemoteCharacteristic* notify = svc->getCharacteristic(JBD_NOTIFY);
@@ -142,8 +150,10 @@ static void pollBattery() {
       if (s_jbdFrameReady) parseJbdBasic(s_jbdBuf);
     }
   }
+  bool got = s_jbdFrameReady;
   c->disconnect();
   NimBLEDevice::deleteClient(c);
+  Serial.printf("[BLE] batt connect=%d frame=%d soc=%d\n", ok, got, gTele.battSoc);
 }
 
 static void bleTask(void*) {
@@ -152,13 +162,15 @@ static void bleTask(void*) {
 
   // load Victron key
   s_vkeyOk = parseHexBytes(gSettings.victronKey, s_vkey, 16) == 16;
+  Serial.printf("[BLE] task start vkeyOk=%d battMac=%s victMac=%s ble=%d\n",
+                s_vkeyOk, gSettings.batteryMac.c_str(), gSettings.victronMac.c_str(), gSettings.bleEnabled);
 
   NimBLEScan* scan = NimBLEDevice::getScan();
   static ScanCB cb;
   scan->setScanCallbacks(&cb);
   scan->setActiveScan(true);
-  scan->setInterval(80);
-  scan->setWindow(60);
+  scan->setInterval(160);   // 100ms
+  scan->setWindow(144);     // 90ms -> 90% duty to catch weak/marginal adverts
 
   uint32_t lastBatt = 0;
   for (;;) {
@@ -166,6 +178,12 @@ static void bleTask(void*) {
     // Scan window for Victron advertisements.
     if (!scan->isScanning()) scan->start(0, false);
     vTaskDelay(pdMS_TO_TICKS(6000));
+    static uint32_t lastLog = 0;
+    if (millis() - lastLog > 30000) {   // periodic BLE health line
+      lastLog = millis();
+      Serial.printf("[BLE] adv=%u victron=%u solValid=%d battValid=%d\n",
+                    s_advSeen, s_victronSeen, gTele.solValid, gTele.battValid);
+    }
 
     // Periodically poll the battery (pauses scan while connected).
     if (millis() - lastBatt > 12000) {

@@ -4,6 +4,11 @@
 - Multi-STA network memory: save multiple Wi-Fi networks (home + campsites);
   auto-join a known network in range; add/remove from the web settings page;
   migrates the previous single-SSID setting. `Huckleberry` AP stays up off-grid.
+- Comprehensive settings: configurable night window + night brightness + auto-night
+  toggle, per-mode brightness, return-to-clock timeout, scheduled display-off
+  (wake on touch), and storing protection limits — all in web Settings.
+- BLE robustness: 90% scan duty for weak adverts, battery connect retries,
+  case-insensitive MAC match, rate-limited health logging.
 
 ## v0.2.0-b1 — Connectivity & live telemetry (M1)
 - Wi-Fi STA + always-on `Huckleberry` AP, captive DNS, mDNS.

@@ -42,8 +42,15 @@ struct Settings {
   // Theme / display
   int  dayThemeIdx = 0;
   bool animations = true;
-  int  dayBrightness = 85;   // overrides theme default if >0
-  bool autoNight = true;     // 8pm-8am black/white home page
+  int  dayBrightness = 85;    // day backlight 10-255
+  int  nightBrightness = 30;  // night (home) backlight
+  bool autoNight = true;      // black/white home page during the night window
+  int  nightStartHour = 20;   // night begins (0-23)
+  int  nightEndHour = 8;      // night ends (0-23)
+  int  homeTimeoutSec = 60;   // inactivity -> return to clock
+  bool dispOffEnable = false; // blank the screen during a window (wake on touch)
+  int  dispOffStartHour = 23;
+  int  dispOffEndHour = 6;
 
   // BLE device bindings (defaults from gitignored secrets.local.h; else set via web)
   String victronMac = HUCK_VICTRON_MAC;

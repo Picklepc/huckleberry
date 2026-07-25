@@ -82,7 +82,18 @@ details summary{cursor:pointer;color:var(--acc);letter-spacing:2px;font-size:13p
   <label style="margin-top:14px">Day theme</label><select id="theme" onchange="save()"></select>
   <label>Day brightness</label><input id="bright" type="range" min="10" max="255" oninput="save()">
   <label style="margin-top:8px"><input type="checkbox" id="anim" style="width:auto" onchange="save()"> Animations</label>
-  <p class="k" style="margin-top:14px">Night mode (8pm–8am) shows a black clock face with white digits on the home page automatically. More settings, BLE discovery &amp; firmware updates coming.</p>
+  <label style="margin-top:14px">Night brightness</label><input id="nbright" type="range" min="5" max="150" oninput="save()">
+  <label style="margin-top:8px"><input type="checkbox" id="autoNight" style="width:auto" onchange="save()"> Auto night mode (black face, white digits) on the home page</label>
+  <div class="grid"><div><label>Night starts</label><select id="nStart" onchange="save()"></select></div>
+   <div><label>Night ends</label><select id="nEnd" onchange="save()"></select></div></div>
+  <label>Return-to-clock timeout (seconds)</label><input id="hto" type="number" min="10" max="600" onchange="save()">
+  <label style="margin-top:10px"><input type="checkbox" id="doEn" style="width:auto" onchange="save()"> Turn the screen off on a schedule (wakes on touch)</label>
+  <div class="grid"><div><label>Off from</label><select id="doStart" onchange="save()"></select></div>
+   <div><label>Off until</label><select id="doEnd" onchange="save()"></select></div></div>
+  <label style="margin-top:10px">Storing protection (°F) — used in Storing mode</label>
+  <div class="grid"><div><label>Heat below</label><input id="stMin" type="number" min="20" max="60" onchange="save()"></div>
+   <div><label>Cool above</label><input id="stMax" type="number" min="70" max="110" onchange="save()"></div></div>
+  <p class="k" style="margin-top:10px">BLE device discovery &amp; firmware (OTA) updates coming next.</p>
  </details></div>
 </div>
 <script>
@@ -101,8 +112,17 @@ function paint(){
  $('ap').textContent=S.net.ap||'--';$('tsrc').textContent=S.net.tsrc;
  $('blink').innerHTML=S.batt&&S.batt.valid?'<span class=ok>live</span>':'waiting…';
  $('slink').innerHTML=S.sol&&S.sol.valid?'<span class=ok>live ('+S.sol.rssi+'dBm)</span>':'waiting…';
- if(!themeInit){$('theme').innerHTML=S.themes.map((n,i)=>`<option value=${i}>${n}</option>`).join('');themeInit=1}
- $('theme').value=S.set.theme;$('bright').value=S.set.bright;$('anim').checked=S.set.anim;
+ if(!themeInit){
+   $('theme').innerHTML=S.themes.map((n,i)=>`<option value=${i}>${n}</option>`).join('');
+   let hrs='';for(let h=0;h<24;h++){let ap=h<12?'AM':'PM',hh=h%12||12;hrs+=`<option value=${h}>${hh} ${ap}</option>`}
+   ['nStart','nEnd','doStart','doEnd'].forEach(id=>$(id).innerHTML=hrs);
+   themeInit=1}
+ let s=S.set;
+ $('theme').value=s.theme;$('bright').value=s.bright;$('anim').checked=s.anim;
+ $('nbright').value=s.nbright;$('autoNight').checked=s.autoNight;
+ $('nStart').value=s.nStart;$('nEnd').value=s.nEnd;$('hto').value=s.hto;
+ $('doEn').checked=s.doEn;$('doStart').value=s.doStart;$('doEnd').value=s.doEnd;
+ $('stMin').value=s.stMin;$('stMax').value=s.stMax;
  renderNets();
  if(S.time){$('clk').textContent=S.time}
 }
@@ -116,7 +136,9 @@ function renderNets(){
 }
 function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})}
 function sp(d){S.th.sp=Math.max(45,Math.min(90,(S.th.sp|0)+d));$('set').textContent=S.th.sp;save()}
-function save(){post('/api/settings',`sp=${$('set').textContent}&mode=${$('mode').value}&camp=${$('camp').value}&theme=${$('theme').value}&bright=${$('bright').value}&anim=${$('anim').checked?1:0}`)}
+function save(){post('/api/settings',`sp=${$('set').textContent}&mode=${$('mode').value}&camp=${$('camp').value}&theme=${$('theme').value}&bright=${$('bright').value}&anim=${$('anim').checked?1:0}`+
+ `&nbright=${$('nbright').value}&autoNight=${$('autoNight').checked?1:0}&nStart=${$('nStart').value}&nEnd=${$('nEnd').value}&hto=${$('hto').value}`+
+ `&doEn=${$('doEn').checked?1:0}&doStart=${$('doStart').value}&doEnd=${$('doEnd').value}&stMin=${$('stMin').value}&stMax=${$('stMax').value}`)}
 function addNet(){let s=$('fssid').value;if(!s)return;post('/api/wifi/add',`ssid=${encodeURIComponent(s)}&pass=${encodeURIComponent($('fpass').value)}`).then(()=>{$('fssid').value='';$('fpass').value='';setTimeout(load,500)})}
 function rmNet(s){post('/api/wifi/remove',`ssid=${encodeURIComponent(s)}`).then(()=>setTimeout(load,300))}
 function pushTime(){post('/api/time','epoch='+Math.floor(Date.now()/1000))}
@@ -153,6 +175,11 @@ static void handleState() {
   for (auto& w : gSettings.networks) saved.add(w.ssid);
   auto st = d["set"].to<JsonObject>();
   st["theme"] = gSettings.dayThemeIdx; st["bright"] = gSettings.dayBrightness; st["anim"] = gSettings.animations;
+  st["nbright"] = gSettings.nightBrightness; st["autoNight"] = gSettings.autoNight;
+  st["nStart"] = gSettings.nightStartHour; st["nEnd"] = gSettings.nightEndHour;
+  st["hto"] = gSettings.homeTimeoutSec;
+  st["doEn"] = gSettings.dispOffEnable; st["doStart"] = gSettings.dispOffStartHour; st["doEnd"] = gSettings.dispOffEndHour;
+  st["stMin"] = gSettings.storeMinF; st["stMax"] = gSettings.storeMaxF;
   auto themes = d["themes"].to<JsonArray>();
   for (size_t i = 0; i < HUCK_THEME_COUNT; i++) themes.add(HUCK_THEMES[i].name);
   // wall clock
@@ -175,6 +202,16 @@ static void handleSettings() {
   if (server.hasArg("theme")) gSettings.dayThemeIdx = server.arg("theme").toInt();
   if (server.hasArg("bright")) gSettings.dayBrightness = server.arg("bright").toInt();
   if (server.hasArg("anim")) gSettings.animations = server.arg("anim").toInt() != 0;
+  if (server.hasArg("nbright")) gSettings.nightBrightness = server.arg("nbright").toInt();
+  if (server.hasArg("autoNight")) gSettings.autoNight = server.arg("autoNight").toInt() != 0;
+  if (server.hasArg("nStart")) gSettings.nightStartHour = server.arg("nStart").toInt();
+  if (server.hasArg("nEnd")) gSettings.nightEndHour = server.arg("nEnd").toInt();
+  if (server.hasArg("hto")) gSettings.homeTimeoutSec = server.arg("hto").toInt();
+  if (server.hasArg("doEn")) gSettings.dispOffEnable = server.arg("doEn").toInt() != 0;
+  if (server.hasArg("doStart")) gSettings.dispOffStartHour = server.arg("doStart").toInt();
+  if (server.hasArg("doEnd")) gSettings.dispOffEndHour = server.arg("doEnd").toInt();
+  if (server.hasArg("stMin")) gSettings.storeMinF = server.arg("stMin").toInt();
+  if (server.hasArg("stMax")) gSettings.storeMaxF = server.arg("stMax").toInt();
   gSettings.save();
   gUiApplyRequested = true;
   server.send(200, "text/plain", "ok");

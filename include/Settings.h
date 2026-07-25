@@ -1,0 +1,61 @@
+#pragma once
+// Persistent settings (NVS via Preferences). Mirrors the spirit of R48's
+// settings: full suite with sane defaults. Extended incrementally.
+#include <Arduino.h>
+#include <array>
+
+// Device-specific secrets (BLE keys/MACs) live in a gitignored secrets file so
+// they never enter git history. See include/secrets.example.h.
+#if __has_include("secrets.local.h")
+#include "secrets.local.h"
+#endif
+#ifndef HUCK_VICTRON_MAC
+#define HUCK_VICTRON_MAC ""
+#endif
+#ifndef HUCK_VICTRON_KEY
+#define HUCK_VICTRON_KEY ""
+#endif
+#ifndef HUCK_BATTERY_MAC
+#define HUCK_BATTERY_MAC ""
+#endif
+
+struct Settings {
+  // Wi-Fi
+  String wifiSsid;
+  String wifiPass;
+  String hostname = "huckleberry";
+  String apSsid   = "Huckleberry";   // no MAC suffix (one-off project)
+  String apPass   = "";               // open by default for easy setup
+
+  // Time
+  String tz = "PST8PDT,M3.2.0,M11.1.0";  // America/Los_Angeles (Central Valley)
+  bool   use24h = false;
+
+  // Theme / display
+  int  dayThemeIdx = 0;
+  bool animations = true;
+  int  dayBrightness = 85;   // overrides theme default if >0
+  bool autoNight = true;     // 8pm-8am black/white home page
+
+  // BLE device bindings (defaults from gitignored secrets.local.h; else set via web)
+  String victronMac = HUCK_VICTRON_MAC;
+  String victronKey = HUCK_VICTRON_KEY;   // 16-byte hex
+  String batteryMac = HUCK_BATTERY_MAC;
+  String gidroxMac  = "";     // TBD when unit arrives
+  bool   bleEnabled = true;
+
+  // Thermostat (Gidrox) — control layer TBD (BLE)
+  int  setpointF = 70;
+  int  mode = 0;              // 0 Auto, 1 Cool, 2 Heat, 3 Fan, 4 Off
+  bool camping = true;        // camping vs storing preset
+  int  storeMinF = 40;        // freeze protection when storing
+  int  storeMaxF = 95;
+
+  void load();
+  void save();
+};
+
+extern Settings gSettings;
+
+// Parse a "aabb.." or "aa:bb:.." hex string into bytes. Returns count.
+size_t parseHexBytes(const String& hex, uint8_t* out, size_t maxLen);

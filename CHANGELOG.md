@@ -1,0 +1,16 @@
+# Changelog
+
+## v0.2.0-b1 — Connectivity & live telemetry (M1)
+- Wi-Fi STA + always-on `Huckleberry` AP, captive DNS, mDNS.
+- Web app: dashboard (power/climate/status) + settings; browser + NTP time sync.
+- BLE task: Eco-Worthy battery (JBD FF00) live; Victron MPPT Instant Readout
+  decoded on-device (mbedtls AES-CTR, ported from Mervyns).
+- Live telemetry wired into on-device Power/Status tiles.
+- Clock: narrowed the hour-tens "1" digit; AM/PM moved beside the minutes.
+- Settings persisted to NVS; device secrets moved to gitignored `secrets.local.h`.
+
+## v0.1.0-a1 — Bring-up & clock (M0)
+- LovyanGFX driver for ZX2D80CE02S (ST7789 8080 8-bit + FT5x06), verified.
+- Seven-segment LED clock; auto day/night (night = black/white, home only);
+  1-minute return-to-clock; tap→thermostat; swipe Clock/Climate/Power/Status.
+- Stock 8 MB firmware backed up.

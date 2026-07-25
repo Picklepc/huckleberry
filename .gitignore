@@ -1,0 +1,17 @@
+# Build output
+.pio/
+*.pyc
+__pycache__/
+
+# Device secrets — never commit
+include/secrets.local.h
+
+# Firmware backups (large binary; keep local)
+backups/*.bin
+
+# Editor / OS
+.vscode/.browse.c_cpp.db*
+.vscode/ipch/
+.DS_Store
+Thumbs.db
+*.swp

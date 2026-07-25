@@ -4,6 +4,10 @@ Reviewed and updated for **every major release / milestone** (a batch of related
 features). Copy this list into the release PR/notes and check each item. The goal
 is that every major step is validated before it's considered done.
 
+## Last release validation
+`v0.2.0` was built, USB flashed, OTA flashed, and verified on trailer Wi-Fi on
+2026-07-25. See `docs/RELEASE_0.2.0.md`.
+
 ## 1. Code validation
 - [ ] Builds clean: `pio run -e huckleberry` with no errors (drive warnings toward zero).
 - [ ] Static sanity: no obvious UB, no blocking calls on the UI loop, BLE/web work off the UI task.

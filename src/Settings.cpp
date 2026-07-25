@@ -6,6 +6,37 @@ Settings gSettings;
 static Preferences prefs;
 
 static const char* NS = "huck";
+static constexpr int LAYOUT_REV = 3;
+static constexpr int BG_REV = 1;
+
+static int clampInt(int v, int lo, int hi) {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+static bool sameSlot(const LayoutSlot& slot, int16_t x, int16_t y, uint8_t scale) {
+  return slot.x == x && slot.y == y && slot.scale == scale;
+}
+
+static LayoutSlot clampSlot(LayoutWidget w, LayoutSlot slot) {
+  static const uint16_t dims[LAYOUT_WIDGET_COUNT][2] = {
+    {252, 130}, {230, 24}, {158, 132}, {294, 138}, {146, 132}, {154, 152}
+  };
+  static const uint8_t minScale[LAYOUT_WIDGET_COUNT] = {70, 70, 75, 75, 75, 75};
+  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {135, 140, 150, 125, 150, 150};
+  int idx = (int)w;
+  slot.scale = clampInt(slot.scale, minScale[idx], maxScale[idx]);
+  int scaledW = ((int)dims[idx][0] * slot.scale + 99) / 100;
+  int scaledH = ((int)dims[idx][1] * slot.scale + 99) / 100;
+  int minX = min(0, 320 - scaledW);
+  int maxX = max(0, 320 - scaledW);
+  int minY = min(0, 240 - scaledH);
+  int maxY = max(0, 240 - scaledH);
+  slot.x = clampInt(slot.x, minX, maxX);
+  slot.y = clampInt(slot.y, minY, maxY);
+  return slot;
+}
 
 bool Settings::addNetwork(const String& ssid, const String& pass) {
   if (ssid.isEmpty()) return false;
@@ -55,6 +86,49 @@ void Settings::load() {
   dispOffEnable = prefs.getBool("doEn", dispOffEnable);
   dispOffStartHour = prefs.getInt("doStart", dispOffStartHour);
   dispOffEndHour = prefs.getInt("doEnd", dispOffEndHour);
+  pageBg[PAGE_CLOCK] = prefs.getString("dayBg", pageBg[PAGE_CLOCK]); // migrate old clock-only key
+  for (size_t i = 0; i < pageBg.size(); i++) {
+    char kb[8];
+    snprintf(kb, sizeof(kb), "bg%u", (unsigned)i);
+    pageBg[i] = prefs.getString(kb, pageBg[i]);
+    if (pageBg[i] == "bg_jewel_01.jpg") pageBg[i] = "bg_charlie_01.jpg";
+    char kt[8], kbox[8];
+    snprintf(kt, sizeof(kt), "pt%u", (unsigned)i);
+    snprintf(kbox, sizeof(kbox), "pb%u", (unsigned)i);
+    pageTheme[i] = (int8_t)clampInt(prefs.getInt(kt, pageTheme[i]), -1, 15);
+    pageBox[i] = prefs.getBool(kbox, pageBox[i]);
+  }
+  int bgRev = prefs.getInt("bgRev", 0);
+  if (bgRev < 1 && pageBg[PAGE_CLOCK] == "bg_flower_01.jpg") {
+    pageBg[PAGE_CLOCK] = "bg_indie_02.jpg";
+  }
+  for (size_t i = 0; i < layout.size(); i++) {
+    char kx[8], ky[8], ks[8];
+    snprintf(kx, sizeof(kx), "lX%u", (unsigned)i);
+    snprintf(ky, sizeof(ky), "lY%u", (unsigned)i);
+    snprintf(ks, sizeof(ks), "lS%u", (unsigned)i);
+    layout[i].x = clampInt(prefs.getInt(kx, layout[i].x), -160, 320);
+    layout[i].y = clampInt(prefs.getInt(ky, layout[i].y), -120, 240);
+    layout[i].scale = clampInt(prefs.getInt(ks, layout[i].scale), 50, 180);
+  }
+  int layoutRev = prefs.getInt("layRev", 0);
+  if (layoutRev < 1 && sameSlot(layout[LAYOUT_POWER_STATS], 194, 46, 100)) {
+    layout[LAYOUT_POWER_STATS] = {168, 50, 100};
+  }
+  if (layoutRev < 2) {
+    if (sameSlot(layout[LAYOUT_DAY_CLOCK], 16, 38, 100)) layout[LAYOUT_DAY_CLOCK] = {8, 30, 92};
+    if (sameSlot(layout[LAYOUT_DAY_DATE], 2, 190, 100)) layout[LAYOUT_DAY_DATE] = {12, 12, 100};
+    if (sameSlot(layout[LAYOUT_THERMO_CARD], 20, 42, 100)) layout[LAYOUT_THERMO_CARD] = {12, 72, 100};
+    if (sameSlot(layout[LAYOUT_POWER_GAUGE], 18, 48, 100)) layout[LAYOUT_POWER_GAUGE] = {12, 70, 100};
+    if (sameSlot(layout[LAYOUT_POWER_STATS], 168, 50, 100)) layout[LAYOUT_POWER_STATS] = {160, 70, 100};
+    if (sameSlot(layout[LAYOUT_STATUS_CARD], 116, 36, 100)) layout[LAYOUT_STATUS_CARD] = {164, 46, 100};
+  }
+  if (layoutRev < 3 && sameSlot(layout[LAYOUT_DAY_CLOCK], 8, 30, 92)) {
+    layout[LAYOUT_DAY_CLOCK] = {14, 30, 100};
+  }
+  for (size_t i = 0; i < layout.size(); i++) {
+    layout[i] = clampSlot((LayoutWidget)i, layout[i]);
+  }
   victronMac = prefs.getString("vMac", victronMac);
   victronKey = prefs.getString("vKey", victronKey);
   batteryMac = prefs.getString("bMac", batteryMac);
@@ -92,6 +166,30 @@ void Settings::save() {
   prefs.putBool("doEn", dispOffEnable);
   prefs.putInt("doStart", dispOffStartHour);
   prefs.putInt("doEnd", dispOffEndHour);
+  prefs.putString("dayBg", pageBg[PAGE_CLOCK]); // retained for compatibility with existing NVS
+  for (size_t i = 0; i < pageBg.size(); i++) {
+    char kb[8];
+    snprintf(kb, sizeof(kb), "bg%u", (unsigned)i);
+    prefs.putString(kb, pageBg[i]);
+    char kt[8], kbox[8];
+    snprintf(kt, sizeof(kt), "pt%u", (unsigned)i);
+    snprintf(kbox, sizeof(kbox), "pb%u", (unsigned)i);
+    pageTheme[i] = (int8_t)clampInt(pageTheme[i], -1, 15);
+    prefs.putInt(kt, pageTheme[i]);
+    prefs.putBool(kbox, pageBox[i]);
+  }
+  for (size_t i = 0; i < layout.size(); i++) {
+    char kx[8], ky[8], ks[8];
+    snprintf(kx, sizeof(kx), "lX%u", (unsigned)i);
+    snprintf(ky, sizeof(ky), "lY%u", (unsigned)i);
+    snprintf(ks, sizeof(ks), "lS%u", (unsigned)i);
+    layout[i] = clampSlot((LayoutWidget)i, layout[i]);
+    prefs.putInt(kx, layout[i].x);
+    prefs.putInt(ky, layout[i].y);
+    prefs.putInt(ks, layout[i].scale);
+  }
+  prefs.putInt("layRev", LAYOUT_REV);
+  prefs.putInt("bgRev", BG_REV);
   prefs.putString("vMac", victronMac);
   prefs.putString("vKey", victronKey);
   prefs.putString("bMac", batteryMac);

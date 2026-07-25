@@ -12,13 +12,14 @@
 //
 // Phase B layers in: Wi-Fi STA/AP, web app, NimBLE (Eco-Worthy battery + Victron
 // MPPT), real Gidrox thermostat control, scheduling, browser/NTP time sync, and
-// recreated flower/weather art. Those screens exist here as themed placeholders.
+// background-driven display layouts.
 
 #include <Arduino.h>
 #include <lvgl.h>
 #include <time.h>
 #include <sys/time.h>
 #include <vector>
+#include <SPIFFS.h>
 
 #include "LGFX_Huckleberry.hpp"
 #include "HuckTheme.h"
@@ -29,8 +30,26 @@
 #include "BleManager.h"
 #include "WebApp.h"
 
+LV_FONT_DECLARE(huck_font_heart_18);
+
+#ifndef HUCK_DEBUG
+#define HUCK_DEBUG 0
+#endif
+#if HUCK_DEBUG
+#define HDBG(...) Serial.printf(__VA_ARGS__)
+#else
+#define HDBG(...)
+#endif
+
 // ---------------------------------------------------------------- display glue
 static huck::LGFX lcd;
+static lgfx::LGFX_Sprite gBgSprites[PAGE_COUNT] = {
+  lgfx::LGFX_Sprite(&lcd), lgfx::LGFX_Sprite(&lcd),
+  lgfx::LGFX_Sprite(&lcd), lgfx::LGFX_Sprite(&lcd)
+};
+static lv_img_dsc_t gBgDsc[PAGE_COUNT];
+static String gLoadedBg[PAGE_COUNT];
+static bool gBgReady[PAGE_COUNT] = {false, false, false, false};
 
 static constexpr int SCR_W = 320;
 static constexpr int SCR_H = 240;
@@ -74,8 +93,7 @@ static lv_obj_t* gDots[4]  = {nullptr, nullptr, nullptr, nullptr};
 static bool gBuildingHome = false;
 static std::vector<lv_obj_t*> gHomeAccent, gHomeHi;
 static std::vector<lv_obj_t*> gDayAccent, gDayPanel, gDayHi;
-// Home-page decorations that are DAY-mode only (hidden in night mode so the
-// clock stays a minimal black face + white digits + date).
+// Day-home overlay objects hide in night mode so the locked LED clock remains minimal.
 static std::vector<lv_obj_t*> gNightHide;
 
 static int  gDayThemeIdx = 0;
@@ -83,17 +101,36 @@ static bool gNightNow = false;
 static lv_obj_t* gDateLabel = nullptr;
 static lv_obj_t* gAmPmLabel = nullptr;
 static lv_obj_t* gThermoSetLabel = nullptr;
+static lv_obj_t* gPageBg[PAGE_COUNT] = {nullptr, nullptr, nullptr, nullptr};
+static lv_obj_t* gPageBgImg[PAGE_COUNT] = {nullptr, nullptr, nullptr, nullptr};
+static lv_obj_t* gDayClockGroup = nullptr;
+static lv_obj_t* gDayGreeting = nullptr;
+static lv_obj_t* gDayHeartsTop = nullptr;
+static lv_obj_t* gDayHeartsBottom = nullptr;
+static lv_obj_t* gDayTimePanel = nullptr;
+static lv_obj_t* gDayTimeLabel = nullptr;
+static lv_obj_t* gDayAmPmLabel = nullptr;
+static lv_obj_t* gDayDateLabel = nullptr;
+static std::vector<lv_obj_t*> gDayOnly;
 
 // Live-data widgets updated from telemetry/net.
 static lv_obj_t* gBSocArc=nullptr; static lv_obj_t* gBSocLbl=nullptr;
-static lv_obj_t* gBVolts=nullptr;  static lv_obj_t* gBAmps=nullptr;
-static lv_obj_t* gBSolarW=nullptr;  static lv_obj_t* gBSolState=nullptr;
+static lv_obj_t* gBNetW=nullptr;   static lv_obj_t* gBSolarW=nullptr;
+static lv_obj_t* gBSolarPct=nullptr; static lv_obj_t* gBChargeState=nullptr;
 static lv_obj_t* gStWifi=nullptr; static lv_obj_t* gStSsid=nullptr; static lv_obj_t* gStIp=nullptr;
 static lv_obj_t* gStAp=nullptr;   static lv_obj_t* gStBatt=nullptr; static lv_obj_t* gStSolar=nullptr;
 static lv_obj_t* gStTime=nullptr;
+static lv_obj_t* gThermoCard=nullptr; static lv_obj_t* gPowerGauge=nullptr;
+static lv_obj_t* gPowerGroup=nullptr; static lv_obj_t* gPowerStatsCard=nullptr; static lv_obj_t* gStatusCard=nullptr;
 
 static const HuckTheme& dayTheme()  { return HUCK_THEMES[gDayThemeIdx]; }
 static const HuckTheme& homeTheme() { return gNightNow ? HUCK_NIGHT_THEME : dayTheme(); }
+static const HuckTheme& displayTheme(DisplayPage page) {
+  int idx = gSettings.pageTheme[page];
+  if (idx < 0 || (size_t)idx >= HUCK_THEME_COUNT) idx = gDayThemeIdx;
+  if (idx < 0 || (size_t)idx >= HUCK_THEME_COUNT) idx = 0;
+  return HUCK_THEMES[idx];
+}
 
 static int activeTileIndex() {
   if (!gTileview) return 0;
@@ -117,44 +154,136 @@ static lv_obj_t* mkPanel(lv_obj_t* parent, int w, int h, lv_align_t align, int x
   lv_obj_set_size(p, w, h);
   lv_obj_align(p, align, xo, yo);
   lv_obj_set_style_radius(p, 14, 0);
-  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_opa(p, LV_OPA_80, 0);
+  lv_obj_set_style_border_width(p, 1, 0);
+  lv_obj_set_style_border_opa(p, LV_OPA_60, 0);
   lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
   gDayPanel.push_back(p);   // panels only exist on the day-themed pages
   return p;
 }
 
-static void trackAccent(lv_obj_t* o) { (gBuildingHome ? gHomeAccent : gDayAccent).push_back(o); }
 static void trackHi(lv_obj_t* o)     { (gBuildingHome ? gHomeHi : gDayHi).push_back(o); }
+static void trackDayOnly(lv_obj_t* o) { gDayOnly.push_back(o); }
 
-// A 5-petal native-flower motif (poppy/lupine vibe), built from round objs.
-// `petalR` is the size of each petal; the bloom spans ~3*petalR. Day-mode only.
-static void mkFlower(lv_obj_t* parent, int cx, int cy, int petalR,
-                     lv_color_t petal, lv_color_t center) {
-  int reach = petalR;  // distance of petals from the center
-  for (int i = 0; i < 5; i++) {
-    float a = (float)i / 5.0f * 6.2831853f - 1.5708f;
-    int px = cx + (int)(cosf(a) * reach) - petalR / 2;
-    int py = cy + (int)(sinf(a) * reach) - petalR / 2;
-    lv_obj_t* pt = lv_obj_create(parent);
-    lv_obj_remove_style_all(pt);
-    lv_obj_set_size(pt, petalR, petalR);
-    lv_obj_set_pos(pt, px, py);
-    lv_obj_set_style_radius(pt, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(pt, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(pt, petal, 0);
-    lv_obj_clear_flag(pt, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    trackAccent(pt);
-    gNightHide.push_back(pt);
+static int layoutZoom(LayoutWidget w) {
+  int scale = gSettings.layout[w].scale;
+  if (scale < 50) scale = 50;
+  if (scale > 180) scale = 180;
+  return scale * 256 / 100;
+}
+
+static LayoutSlot clampRuntimeSlot(LayoutWidget w, LayoutSlot slot) {
+  static const uint16_t dims[LAYOUT_WIDGET_COUNT][2] = {
+    {252, 130}, {230, 24}, {158, 132}, {294, 138}, {146, 132}, {154, 152}
+  };
+  static const uint8_t minScale[LAYOUT_WIDGET_COUNT] = {70, 70, 75, 75, 75, 75};
+  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {135, 140, 150, 125, 150, 150};
+  int idx = (int)w;
+  slot.scale = constrain((int)slot.scale, (int)minScale[idx], (int)maxScale[idx]);
+  int scaledW = ((int)dims[idx][0] * slot.scale + 99) / 100;
+  int scaledH = ((int)dims[idx][1] * slot.scale + 99) / 100;
+  int minX = min(0, SCR_W - scaledW);
+  int maxX = max(0, SCR_W - scaledW);
+  int minY = min(0, SCR_H - scaledH);
+  int maxY = max(0, SCR_H - scaledH);
+  slot.x = constrain((int)slot.x, minX, maxX);
+  slot.y = constrain((int)slot.y, minY, maxY);
+  return slot;
+}
+
+static void applyLayout(lv_obj_t* o, LayoutWidget w) {
+  if (!o) return;
+  LayoutSlot raw = gSettings.layout[w];
+  LayoutSlot slot = clampRuntimeSlot(w, raw);
+  if (slot.x != raw.x || slot.y != raw.y || slot.scale != raw.scale) {
+    HDBG("[LAYOUT] clamp w=%d (%d,%d,%u)->(%d,%d,%u)\n", (int)w,
+         raw.x, raw.y, raw.scale, slot.x, slot.y, slot.scale);
+    gSettings.layout[w] = slot;
   }
-  lv_obj_t* c = lv_obj_create(parent);
-  lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, petalR * 3 / 4, petalR * 3 / 4);
-  lv_obj_set_pos(c, cx - petalR * 3 / 8, cy - petalR * 3 / 8);
-  lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(c, center, 0);
-  lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-  gNightHide.push_back(c);
+  lv_obj_set_pos(o, slot.x, slot.y);
+  lv_obj_set_style_transform_pivot_x(o, 0, 0);
+  lv_obj_set_style_transform_pivot_y(o, 0, 0);
+  lv_obj_set_style_transform_zoom(o, layoutZoom(w), 0);
+}
+
+static DisplayPage pageForObject(lv_obj_t* o) {
+  for (lv_obj_t* p = o; p; p = lv_obj_get_parent(p)) {
+    for (int i = 0; i < PAGE_COUNT; i++) {
+      if (p == gTiles[i]) return (DisplayPage)i;
+    }
+  }
+  return PAGE_CLOCK;
+}
+
+static bool spiffsMounted() {
+  static bool ok = false;
+  if (!ok) ok = SPIFFS.begin(false);
+  return ok;
+}
+
+static void byteSwapRgb565(void* buffer, size_t pixelCount) {
+  auto* p = static_cast<uint16_t*>(buffer);
+  for (size_t i = 0; i < pixelCount; i++) {
+    p[i] = (uint16_t)((p[i] << 8) | (p[i] >> 8));
+  }
+}
+
+static void loadPageBackground(DisplayPage page, bool force = false) {
+  if (!gPageBgImg[page]) return;
+  const String& bgName = gSettings.pageBg[page];
+  if (!force && gBgReady[page] && gLoadedBg[page] == bgName) {
+    lv_obj_clear_flag(gPageBgImg[page], LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_add_flag(gPageBgImg[page], LV_OBJ_FLAG_HIDDEN);
+  gBgReady[page] = false;
+  gLoadedBg[page] = "";
+  if (bgName.isEmpty() || !spiffsMounted() || !psramFound()) return;
+
+  String path = String("/bg/") + bgName;
+  if (!SPIFFS.exists(path)) return;
+
+  lgfx::LGFX_Sprite& sprite = gBgSprites[page];
+  sprite.setPsram(true);
+  sprite.setColorDepth(16);
+  if (!sprite.getBuffer() && !sprite.createSprite(SCR_W, SCR_H)) return;
+  sprite.fillScreen(0);
+  if (!sprite.drawJpgFile(SPIFFS, path.c_str(), 0, 0, SCR_W, SCR_H, 0, 0, 1.0f)) return;
+  byteSwapRgb565(sprite.getBuffer(), SCR_W * SCR_H);
+
+  gBgDsc[page].header.always_zero = 0;
+  gBgDsc[page].header.w = SCR_W;
+  gBgDsc[page].header.h = SCR_H;
+  gBgDsc[page].header.cf = LV_IMG_CF_TRUE_COLOR;
+  gBgDsc[page].data_size = SCR_W * SCR_H * sizeof(lv_color_t);
+  gBgDsc[page].data = static_cast<const uint8_t*>(sprite.getBuffer());
+  lv_img_set_src(gPageBgImg[page], &gBgDsc[page]);
+  lv_obj_clear_flag(gPageBgImg[page], LV_OBJ_FLAG_HIDDEN);
+  gLoadedBg[page] = bgName;
+  gBgReady[page] = true;
+}
+
+static void loadPageBackgrounds(bool force = false) {
+  for (int i = 0; i < PAGE_COUNT; i++) loadPageBackground((DisplayPage)i, force);
+}
+
+static lv_obj_t* buildPageBackground(lv_obj_t* tile, DisplayPage page, bool dayOnly) {
+  lv_obj_t* fill = lv_obj_create(tile);
+  lv_obj_remove_style_all(fill);
+  lv_obj_set_size(fill, SCR_W, SCR_H);
+  lv_obj_set_pos(fill, 0, 0);
+  lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+  lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  gPageBg[page] = fill;
+  if (dayOnly) trackDayOnly(fill);
+
+  lv_obj_t* img = lv_img_create(tile);
+  lv_obj_set_pos(img, 0, 0);
+  lv_obj_clear_flag(img, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(img, LV_OBJ_FLAG_HIDDEN);
+  gPageBgImg[page] = img;
+  if (dayOnly) trackDayOnly(img);
+  return fill;
 }
 
 // ------------------------------------------------------------------ theming
@@ -189,13 +318,54 @@ static void updateDisplayPower() {
   }
 }
 
-// Night mode keeps the home page minimal: clock + date only. Everything
-// decorative (flowers, hint text, nav dots) hides until day mode returns.
+// Night mode keeps the home page minimal: clock + date only.
 static void updateHomeDecorVisibility() {
   for (auto* o : gNightHide) {
     if (gNightNow) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
     else           lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
+  for (auto* o : gDayOnly) {
+    if (gNightNow) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else           lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static bool clockUsesFramelessDarkStyle() {
+  return gSettings.pageBg[PAGE_CLOCK] == "bg_indie_02.jpg";
+}
+
+static void applyDayHomeTheme() {
+  const HuckTheme& t = displayTheme(PAGE_CLOCK);
+  const bool frameless = clockUsesFramelessDarkStyle();
+  const bool useBox = gSettings.pageBox[PAGE_CLOCK];
+  const lv_color_t clockText = frameless ? lv_color_hex(0x243016) : t.text_hi;
+  const lv_color_t clockAccent = frameless ? lv_color_hex(0x7A2118) : t.accent;
+  const lv_color_t clockAccent2 = frameless ? lv_color_hex(0x5A3A16) : t.accent2;
+  const lv_color_t dateText = frameless ? lv_color_hex(0x3A2A13) : t.text_hi;
+  if (gPageBg[PAGE_CLOCK]) {
+    lv_obj_set_style_bg_color(gPageBg[PAGE_CLOCK], t.bg, 0);
+    lv_obj_set_style_bg_opa(gPageBg[PAGE_CLOCK], LV_OPA_COVER, 0);
+  }
+  if (gDayTimePanel) {
+    lv_obj_set_style_bg_color(gDayTimePanel, t.panel, 0);
+    lv_obj_set_style_border_color(gDayTimePanel, t.accent, 0);
+    lv_obj_set_style_bg_opa(gDayTimePanel, useBox ? LV_OPA_90 : LV_OPA_0, 0);
+    lv_obj_set_style_border_opa(gDayTimePanel, useBox ? LV_OPA_80 : LV_OPA_0, 0);
+  }
+  if (gDayGreeting) lv_obj_set_style_text_color(gDayGreeting, clockAccent, 0);
+  if (gDayHeartsTop) lv_obj_set_style_text_color(gDayHeartsTop, clockAccent2, 0);
+  if (gDayHeartsBottom) lv_obj_set_style_text_color(gDayHeartsBottom, clockAccent2, 0);
+  if (gDayTimeLabel) lv_obj_set_style_text_color(gDayTimeLabel, clockText, 0);
+  if (gDayAmPmLabel) lv_obj_set_style_text_color(gDayAmPmLabel, clockAccent, 0);
+  if (gDayDateLabel) lv_obj_set_style_text_color(gDayDateLabel, dateText, 0);
+}
+
+static void applyDisplayLayouts() {
+  applyLayout(gDayClockGroup, LAYOUT_DAY_CLOCK);
+  applyLayout(gDayDateLabel, LAYOUT_DAY_DATE);
+  applyLayout(gThermoCard, LAYOUT_THERMO_CARD);
+  applyLayout(gPowerGroup, LAYOUT_POWER_GAUGE);
+  applyLayout(gStatusCard, LAYOUT_STATUS_CARD);
 }
 
 static void applyHomeTheme() {
@@ -216,32 +386,57 @@ static void applyHomeTheme() {
     lv_obj_set_style_bg_color(gDots[i], on ? t.accent : t.text, 0);
     lv_obj_set_style_bg_opa(gDots[i], on ? LV_OPA_COVER : LV_OPA_40, 0);
   }
+  applyDayHomeTheme();
   updateHomeDecorVisibility();
 }
 
 static void applyDayTheme() {
-  const HuckTheme& t = dayTheme();
   for (int i = 1; i < 4; i++) {
     if (!gTiles[i]) continue;
+    const HuckTheme& t = displayTheme((DisplayPage)i);
     lv_obj_set_style_bg_color(gTiles[i], t.bg, 0);
     lv_obj_set_style_bg_opa(gTiles[i], LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(gTiles[i], t.text, 0);
   }
-  for (auto* o : gDayPanel)  lv_obj_set_style_bg_color(o, t.panel, 0);
-  for (auto* o : gDayAccent) lv_obj_set_style_bg_color(o, t.accent, 0);
-  for (auto* o : gDayHi)     lv_obj_set_style_text_color(o, t.text_hi, 0);
+  for (int i = PAGE_CLIMATE; i < PAGE_COUNT; i++) {
+    if (!gPageBg[i]) continue;
+    const HuckTheme& t = displayTheme((DisplayPage)i);
+    lv_obj_set_style_bg_color(gPageBg[i], t.bg, 0);
+    lv_obj_set_style_bg_opa(gPageBg[i], LV_OPA_COVER, 0);
+  }
+  for (auto* o : gDayPanel) {
+    DisplayPage p = pageForObject(o);
+    const HuckTheme& t = displayTheme(p);
+    bool useBox = gSettings.pageBox[p];
+    lv_obj_set_style_bg_color(o, t.panel, 0);
+    lv_obj_set_style_bg_opa(o, useBox ? LV_OPA_80 : LV_OPA_0, 0);
+    lv_obj_set_style_border_color(o, t.accent, 0);
+    lv_obj_set_style_border_opa(o, useBox ? LV_OPA_60 : LV_OPA_0, 0);
+  }
+  for (auto* o : gDayAccent) lv_obj_set_style_bg_color(o, displayTheme(pageForObject(o)).accent, 0);
+  for (auto* o : gDayHi)     lv_obj_set_style_text_color(o, displayTheme(pageForObject(o)).text_hi, 0);
 }
 
 static void applyAllThemes() {
   lv_obj_set_style_bg_color(lv_scr_act(), homeTheme().bg, 0);
   applyDayTheme();
   applyHomeTheme();
+  applyDisplayLayouts();
   setBrightnessForPage();
 }
 
 // ------------------------------------------------------------------ events
 static void tileChanged(lv_event_t*) {
   applyHomeTheme();          // refresh dot indicator
+  setBrightnessForPage();
+}
+
+static void snapToHomeTile() {
+  if (!gTileview) return;
+  lv_obj_set_tile_id(gTileview, 0, 0, LV_ANIM_OFF);
+  lv_obj_scroll_to_x(gTileview, 0, LV_ANIM_OFF);
+  lv_obj_update_layout(gTileview);
+  applyHomeTheme();
   setBrightnessForPage();
 }
 
@@ -279,53 +474,95 @@ static void buildClockTile(lv_obj_t* tile) {
   gDateLabel = mkLabel(tile, "-- --- --", &lv_font_montserrat_16, dayTheme().text,
                        LV_ALIGN_BOTTOM_MID, 0, -34);
 
-  // Big native-flower blooms in the lower corners — day mode only.
-  mkFlower(tile, 44, 190, 20, dayTheme().accent, dayTheme().accent2);
-  mkFlower(tile, 276, 190, 20, dayTheme().accent2, dayTheme().accent);
+  // Day-mode clock overlays the selected page background; night keeps the locked LED clock.
+  buildPageBackground(tile, PAGE_CLOCK, true);
 
-  lv_obj_t* hint = mkLabel(tile, "tap for climate  •  swipe for power",
-                           &lv_font_montserrat_12, dayTheme().text,
-                           LV_ALIGN_BOTTOM_MID, 0, -12);
-  gNightHide.push_back(hint);
+  gDayClockGroup = lv_obj_create(tile);
+  lv_obj_remove_style_all(gDayClockGroup);
+  lv_obj_set_size(gDayClockGroup, 252, 130);
+  lv_obj_add_flag(gDayClockGroup, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(gDayClockGroup, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(gDayClockGroup, clockTapped, LV_EVENT_CLICKED, nullptr);
+  trackDayOnly(gDayClockGroup);
+
+  const char* hearts = "\xE2\x99\xA5\xE2\x99\xA5\xE2\x99\xA5";
+  gDayHeartsTop = mkLabel(gDayClockGroup, hearts, &huck_font_heart_18,
+                          dayTheme().accent2, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_text_letter_space(gDayHeartsTop, 10, 0);
+  gDayGreeting = mkLabel(gDayClockGroup, "Good Morning!", &lv_font_montserrat_18,
+                         dayTheme().accent, LV_ALIGN_TOP_MID, 0, 20);
+
+  gDayTimePanel = lv_obj_create(gDayClockGroup);
+  lv_obj_remove_style_all(gDayTimePanel);
+  lv_obj_set_size(gDayTimePanel, 216, 62);
+  lv_obj_align(gDayTimePanel, LV_ALIGN_TOP_MID, 0, 50);
+  lv_obj_set_style_radius(gDayTimePanel, 22, 0);
+  lv_obj_set_style_bg_opa(gDayTimePanel, LV_OPA_90, 0);
+  lv_obj_set_style_border_width(gDayTimePanel, 2, 0);
+  lv_obj_clear_flag(gDayTimePanel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+  gDayTimeLabel = mkLabel(gDayTimePanel, "--:--", &lv_font_montserrat_40,
+                          dayTheme().text_hi, LV_ALIGN_LEFT_MID, 16, -1);
+  gDayAmPmLabel = mkLabel(gDayTimePanel, "AM", &lv_font_montserrat_18,
+                          dayTheme().accent, LV_ALIGN_RIGHT_MID, -14, -10);
+  gDayHeartsBottom = mkLabel(gDayClockGroup, hearts, &huck_font_heart_18,
+                             dayTheme().accent2, LV_ALIGN_BOTTOM_MID, 0, -2);
+  lv_obj_set_style_text_letter_space(gDayHeartsBottom, 10, 0);
+
+  gDayDateLabel = mkLabel(tile, "--", &lv_font_montserrat_16, dayTheme().text_hi,
+                          LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_width(gDayDateLabel, 230);
+  lv_obj_set_style_text_align(gDayDateLabel, LV_TEXT_ALIGN_LEFT, 0);
+  trackDayOnly(gDayDateLabel);
   gBuildingHome = false;
 }
 
 static void buildThermoTile(lv_obj_t* tile) {
-  mkLabel(tile, "CLIMATE", &lv_font_montserrat_16, dayTheme().accent, LV_ALIGN_TOP_MID, 0, 12);
+  buildPageBackground(tile, PAGE_CLIMATE, false);
 
-  lv_obj_t* card = mkPanel(tile, 150, 150, LV_ALIGN_CENTER, 0, 6);
-  char sp[8]; snprintf(sp, sizeof(sp), "%d°", gSettings.setpointF);
-  gThermoSetLabel = mkLabel(card, sp, &lv_font_montserrat_48, dayTheme().text_hi,
-                            LV_ALIGN_CENTER, 0, -8);
+  lv_obj_t* card = mkPanel(tile, 158, 132, LV_ALIGN_TOP_LEFT, 12, 72);
+  gThermoCard = card;
+  char sp[8]; snprintf(sp, sizeof(sp), "%d\xC2\xB0", gSettings.setpointF);
+  gThermoSetLabel = mkLabel(card, sp, &lv_font_montserrat_40, dayTheme().text_hi,
+                            LV_ALIGN_TOP_MID, 0, 4);
   trackHi(gThermoSetLabel);
-  mkLabel(card, "SET POINT", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_CENTER, 0, 40);
+  mkLabel(card, "SET POINT", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_MID, 0, 48);
 
-  lv_obj_t* minus = lv_btn_create(tile);
-  lv_obj_set_size(minus, 60, 90);
-  lv_obj_align(minus, LV_ALIGN_LEFT_MID, 10, 6);
+  lv_obj_t* minus = lv_btn_create(card);
+  lv_obj_set_size(minus, 44, 42);
+  lv_obj_align(minus, LV_ALIGN_BOTTOM_LEFT, 12, -20);
   lv_obj_set_style_bg_color(minus, dayTheme().panel, 0);
+  lv_obj_set_style_bg_opa(minus, LV_OPA_70, 0);
   gDayPanel.push_back(minus);
   lv_obj_add_event_cb(minus, setpointStep, LV_EVENT_CLICKED, (void*)(intptr_t)-1);
-  trackHi(mkLabel(minus, "-", &lv_font_montserrat_40, dayTheme().text_hi, LV_ALIGN_CENTER, 0, 0));
+  trackHi(mkLabel(minus, "-", &lv_font_montserrat_32, dayTheme().text_hi, LV_ALIGN_CENTER, 0, -1));
 
-  lv_obj_t* plus = lv_btn_create(tile);
-  lv_obj_set_size(plus, 60, 90);
-  lv_obj_align(plus, LV_ALIGN_RIGHT_MID, -10, 6);
+  lv_obj_t* plus = lv_btn_create(card);
+  lv_obj_set_size(plus, 44, 42);
+  lv_obj_align(plus, LV_ALIGN_BOTTOM_RIGHT, -12, -20);
   lv_obj_set_style_bg_color(plus, dayTheme().panel, 0);
+  lv_obj_set_style_bg_opa(plus, LV_OPA_70, 0);
   gDayPanel.push_back(plus);
   lv_obj_add_event_cb(plus, setpointStep, LV_EVENT_CLICKED, (void*)(intptr_t)1);
-  trackHi(mkLabel(plus, "+", &lv_font_montserrat_40, dayTheme().text_hi, LV_ALIGN_CENTER, 0, 0));
+  trackHi(mkLabel(plus, "+", &lv_font_montserrat_32, dayTheme().text_hi, LV_ALIGN_CENTER, 0, -1));
 
-  mkLabel(tile, "Gidrox 10k BTU  •  mode: AUTO  •  now 72°",
-          &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_BOTTOM_MID, 0, -14);
+  mkLabel(card, gSettings.gidroxMac.isEmpty() ? "AC not paired" : "AC paired",
+          &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_BOTTOM_MID, 0, -4);
 }
 
 static void buildBatteryTile(lv_obj_t* tile) {
-  mkLabel(tile, "POWER", &lv_font_montserrat_16, dayTheme().accent, LV_ALIGN_TOP_MID, 0, 12);
+  buildPageBackground(tile, PAGE_POWER, false);
 
-  lv_obj_t* arc = lv_arc_create(tile);
-  lv_obj_set_size(arc, 150, 150);
-  lv_obj_align(arc, LV_ALIGN_LEFT_MID, 14, 6);
+  gPowerGroup = lv_obj_create(tile);
+  lv_obj_remove_style_all(gPowerGroup);
+  lv_obj_set_size(gPowerGroup, 294, 138);
+  lv_obj_set_pos(gPowerGroup, 12, 70);
+  lv_obj_clear_flag(gPowerGroup, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* arc = lv_arc_create(gPowerGroup);
+  gPowerGauge = arc;
+  lv_obj_set_size(arc, 138, 138);
+  lv_obj_align(arc, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_arc_set_rotation(arc, 135);
   lv_arc_set_bg_angles(arc, 0, 270);
   lv_arc_set_value(arc, 0);
@@ -334,36 +571,37 @@ static void buildBatteryTile(lv_obj_t* tile) {
   lv_obj_set_style_arc_color(arc, dayTheme().panel, LV_PART_MAIN);
   lv_obj_set_style_arc_color(arc, dayTheme().accent, LV_PART_INDICATOR);
   gBSocArc = arc;
-  gBSocLbl = mkLabel(arc, "--%", &lv_font_montserrat_32, dayTheme().text_hi, LV_ALIGN_CENTER, 0, -6);
+  gBSocLbl = mkLabel(arc, "--%", &lv_font_montserrat_32, dayTheme().text_hi, LV_ALIGN_CENTER, 0, -8);
   trackHi(gBSocLbl);
-  mkLabel(arc, "Eco-Worthy", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_CENTER, 0, 22);
+  mkLabel(arc, "Battery", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_CENTER, 0, 22);
 
-  lv_obj_t* card = mkPanel(tile, 118, 150, LV_ALIGN_RIGHT_MID, -12, 6);
-  gBVolts = mkLabel(card, "-- V", &lv_font_montserrat_20, dayTheme().text_hi, LV_ALIGN_TOP_MID, 0, 6);
-  trackHi(gBVolts);
-  gBAmps = mkLabel(card, "-- A", &lv_font_montserrat_14, dayTheme().text, LV_ALIGN_TOP_MID, 0, 34);
-  mkLabel(card, "Solar", &lv_font_montserrat_14, dayTheme().accent2, LV_ALIGN_TOP_MID, 0, 64);
-  gBSolarW = mkLabel(card, "-- W", &lv_font_montserrat_18, dayTheme().text_hi, LV_ALIGN_TOP_MID, 0, 86);
+  lv_obj_t* card = mkPanel(gPowerGroup, 146, 132, LV_ALIGN_TOP_LEFT, 148, 0);
+  gPowerStatsCard = card;
+  mkLabel(card, "Solar", &lv_font_montserrat_12, dayTheme().accent2, LV_ALIGN_TOP_LEFT, 12, 8);
+  gBSolarW = mkLabel(card, "-- W", &lv_font_montserrat_20, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 12, 24);
   trackHi(gBSolarW);
-  gBSolState = mkLabel(card, "Victron MPPT", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_BOTTOM_MID, 0, -8);
+  gBSolarPct = mkLabel(card, "learning max", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_LEFT, 12, 52);
+  mkLabel(card, "Battery net", &lv_font_montserrat_12, dayTheme().accent2, LV_ALIGN_TOP_LEFT, 12, 76);
+  gBNetW = mkLabel(card, "-- W", &lv_font_montserrat_18, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 12, 92);
+  trackHi(gBNetW);
+  gBChargeState = mkLabel(card, "--", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_BOTTOM_LEFT, 12, -6);
 }
 
 static void buildStatusTile(lv_obj_t* tile) {
-  mkLabel(tile, "STATUS", &lv_font_montserrat_16, dayTheme().accent, LV_ALIGN_TOP_MID, 0, 12);
-  lv_obj_t* card = mkPanel(tile, 296, 182, LV_ALIGN_CENTER, 0, 8);
+  buildPageBackground(tile, PAGE_STATUS, false);
+  lv_obj_t* card = mkPanel(tile, 154, 152, LV_ALIGN_TOP_LEFT, 164, 46);
+  gStatusCard = card;
   auto row = [&](const char* k, int y) {
-    mkLabel(card, k, &lv_font_montserrat_14, dayTheme().text, LV_ALIGN_TOP_LEFT, 14, y);
-    return mkLabel(card, "--", &lv_font_montserrat_14, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 96, y);
+    mkLabel(card, k, &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_LEFT, 10, y);
+    return mkLabel(card, "--", &lv_font_montserrat_12, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 58, y);
   };
-  gStWifi = row("Wi-Fi", 10);
-  gStSsid = row("SSID", 32);
-  gStIp   = row("IP", 54);
-  gStAp   = row("AP", 76);
-  gStBatt = row("Battery", 98);
-  gStSolar= row("Solar", 120);
-  gStTime = row("Time", 142);
-  mkLabel(card, "Firmware", &lv_font_montserrat_14, dayTheme().text, LV_ALIGN_TOP_LEFT, 14, 164);
-  mkLabel(card, "v0.2.0-b1", &lv_font_montserrat_14, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 96, 164);
+  gStWifi = row("Wi-Fi", 8);
+  gStSsid = row("SSID", 28);
+  gStIp   = row("IP", 48);
+  gStAp   = row("AP", 68);
+  gStBatt = row("Batt", 88);
+  gStSolar= row("Solar", 108);
+  gStTime = row("Time", 128);
 }
 
 // Push live telemetry + net status into the on-device tiles.
@@ -376,22 +614,50 @@ static void updateDataTiles() {
   if (gBSocLbl) {
     if (t.battValid && t.battSoc >= 0) { snprintf(b, sizeof(b), "%d%%", t.battSoc); lv_label_set_text(gBSocLbl, b); lv_arc_set_value(gBSocArc, t.battSoc); }
   }
-  if (gBVolts) { if (t.battValid) { snprintf(b, sizeof(b), "%.2f V", t.battVolts); lv_label_set_text(gBVolts, b); } }
-  if (gBAmps)  { if (t.battValid) { snprintf(b, sizeof(b), "%.1f A", t.battAmps); lv_label_set_text(gBAmps, b); } }
-  if (gBSolarW){ if (t.solValid)  { snprintf(b, sizeof(b), "%.0f W", t.solPvW); lv_label_set_text(gBSolarW, b); } }
-  if (gBSolState) {
+  if (gBSolarW) {
+    if (t.solValid && !isnan(t.solPvW)) snprintf(b, sizeof(b), "%.0f W", t.solPvW);
+    else snprintf(b, sizeof(b), "-- W");
+    lv_label_set_text(gBSolarW, b);
+  }
+  if (gBSolarPct) {
+    if (t.solValid && !isnan(t.solPvW) && !isnan(t.solPvMaxW) && t.solPvMaxW > 0.5f) {
+      int pct = constrain((int)lroundf(t.solPvW * 100.0f / t.solPvMaxW), 0, 999);
+      snprintf(b, sizeof(b), "%d%% of %.0fW max", pct, t.solPvMaxW);
+    } else {
+      snprintf(b, sizeof(b), t.solValid ? "learning max" : "waiting");
+    }
+    lv_label_set_text(gBSolarPct, b);
+  }
+  if (gBNetW) {
+    if (t.battValid && !isnan(t.battVolts) && !isnan(t.battAmps)) {
+      float watts = t.battVolts * t.battAmps;
+      snprintf(b, sizeof(b), "%c%.0f W", watts >= 0 ? '+' : '-', fabsf(watts));
+    } else {
+      snprintf(b, sizeof(b), "-- W");
+    }
+    lv_label_set_text(gBNetW, b);
+  }
+  if (gBChargeState) {
     static const char* sn[] = {"Off","","","Bulk","Absorb","Float","","Equalize"};
     const char* s = (t.solState < 8 && sn[t.solState][0]) ? sn[t.solState] : "On";
-    snprintf(b, sizeof(b), "Victron: %s", t.solValid ? s : "…");
-    lv_label_set_text(gBSolState, b);
+    if (t.solValid) snprintf(b, sizeof(b), "%s", s);
+    if (!t.solValid) snprintf(b, sizeof(b), "waiting");
+    if (t.battValid && !isnan(t.battAmps)) {
+      snprintf(b, sizeof(b), "%s / %s",
+               t.battAmps > 0.05f ? "charging" : (t.battAmps < -0.05f ? "using" : "steady"),
+               t.solValid ? s : "solar wait");
+    }
+    lv_label_set_text(gBChargeState, b);
   }
 
   if (gStWifi) lv_label_set_text(gStWifi, gNet.staConnected ? "connected" : "offline");
   if (gStSsid) lv_label_set_text(gStSsid, gNet.ssid.isEmpty() ? "--" : gNet.ssid.c_str());
   if (gStIp)   lv_label_set_text(gStIp, gNet.ip.isEmpty() ? "--" : gNet.ip.c_str());
   if (gStAp)   lv_label_set_text(gStAp, gNet.apActive ? gNet.apSsid.c_str() : "off");
-  if (gStBatt) lv_label_set_text(gStBatt, t.battValid ? "live" : "waiting…");
-  if (gStSolar){ snprintf(b, sizeof(b), t.solValid ? "live (%ddBm)" : "waiting…", t.solRssi); lv_label_set_text(gStSolar, b); }
+  if (gStBatt) lv_label_set_text(gStBatt, t.battValid ? "live" : "waiting");
+  if (gStSolar){ snprintf(b, sizeof(b), t.solValid ? "live %ddBm" : "waiting", t.solRssi); lv_label_set_text(gStSolar, b); }
+  if (gStBatt && !t.battValid) lv_label_set_text(gStBatt, "waiting");
+  if (gStSolar && !t.solValid) lv_label_set_text(gStSolar, "waiting");
   if (gStTime) lv_label_set_text(gStTime, gNet.timeSource.c_str());
 }
 
@@ -452,6 +718,22 @@ static void updateClock() {
   gClock.setColon((lt.tm_sec & 1) == 0);
 
   if (gAmPmLabel) lv_label_set_text(gAmPmLabel, lt.tm_hour < 12 ? "AM" : "PM");
+  if (gDayTimeLabel) {
+    char tb[8];
+    snprintf(tb, sizeof(tb), "%d:%02d", h12, lt.tm_min);
+    lv_label_set_text(gDayTimeLabel, tb);
+  }
+  if (gDayAmPmLabel) lv_label_set_text(gDayAmPmLabel, lt.tm_hour < 12 ? "AM" : "PM");
+  if (gDayGreeting) {
+    const char* g = lt.tm_hour < 12 ? "Good Morning!" : (lt.tm_hour < 17 ? "Good Afternoon!" : "Good Evening!");
+    lv_label_set_text(gDayGreeting, g);
+  }
+  if (gDayDateLabel) {
+    static const char* wdFull[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    static const char* moFull[] = {"January","February","March","April","May","June","July","August","September","October","November","December"};
+    lv_label_set_text_fmt(gDayDateLabel, "%s, %s %d, %d",
+                          wdFull[lt.tm_wday], moFull[lt.tm_mon], lt.tm_mday, lt.tm_year + 1900);
+  }
   if (gDateLabel) {
     static const char* wd[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     static const char* mo[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
@@ -488,6 +770,7 @@ void setup() {
 
   seedClockFromBuild();
   buildUi();
+  loadPageBackgrounds();
   updateClock();
   applyAllThemes();
 
@@ -511,6 +794,9 @@ static void applyUiChangesIfRequested() {
   if (gThermoSetLabel) lv_label_set_text_fmt(gThermoSetLabel, "%d°", gSettings.setpointF);
   time_t now = time(nullptr); struct tm lt; localtime_r(&now, &lt);
   gNightNow = computeNight(lt.tm_hour);   // reflect new night-window/autoNight now
+  bool reloadBg = gBgReloadRequested;
+  gBgReloadRequested = false;
+  loadPageBackgrounds(reloadBg);
   applyAllThemes();
 }
 
@@ -536,8 +822,8 @@ void loop() {
 
   // Inactivity -> snap back to the home clock page (configurable).
   uint32_t timeoutMs = (uint32_t)(gSettings.homeTimeoutSec > 0 ? gSettings.homeTimeoutSec : 60) * 1000;
-  if (activeTileIndex() != 0 && lv_disp_get_inactive_time(nullptr) > timeoutMs) {
-    lv_obj_set_tile_id(gTileview, 0, 0, LV_ANIM_ON);
+  if (gTileview && lv_disp_get_inactive_time(nullptr) > timeoutMs && lv_obj_get_scroll_x(gTileview) != 0) {
+    snapToHomeTile();
   }
 
   lv_timer_handler();

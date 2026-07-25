@@ -59,6 +59,28 @@ factor; labels via font-size tiers; cards via a size factor.
   (`nightStartHour`/`nightEndHour`, `autoNight`).
 - Central-Valley native flowers + **Indie** the horse motifs in day mode.
 
+## Web app direction
+The `v0.2.0` web app is functional but still transitional. The next pass should
+be a full web restructure, not more incremental stacking inside one long page.
+See [WEB_APP_OVERHAUL.md](WEB_APP_OVERHAUL.md).
+
+Design goals:
+- Dashboard first: simple battery/charging state, climate controls, link health,
+  and firmware version.
+- Dedicated Power page: all EcoWorthy/JBD and Victron data, with future space for
+  deeper Victron history once the richer BLE protocol is understood.
+- Display Settings page: one selected display target/card at a time, with
+  background, position, scale, color theme, data-box toggle, and an approximate
+  live preview. Save changes safely as targets are switched.
+- Seasonal presets: save and restore complete display looks for Christmas,
+  spring, Valentine, camping, storage, and other seasonal setups.
+- Networking card: hostname (default `huckleberry` / shown as `Huckleberry`),
+  Wi-Fi manager, STA/AP state.
+- BLE card: battery, Victron, and Gidrox bindings; later scan/pick/pair.
+- Firmware card: current version and OTA upload.
+- Web theme controls: the web UI accent palette, including the current orange,
+  should become configurable.
+
 ## Off-grid / connectivity
 - STA (multiple saved networks: home + campsites, auto-join) **plus** an
   always-on `Huckleberry` AP so a phone can connect directly off-grid. All core

@@ -5,6 +5,7 @@
 Telemetry gTele;
 NetStatus gNet;
 volatile bool gUiApplyRequested = false;
+volatile bool gBgReloadRequested = false;
 
 static SemaphoreHandle_t s_mtx = nullptr;
 

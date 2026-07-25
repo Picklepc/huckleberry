@@ -23,6 +23,30 @@
 // One saved Wi-Fi network (home, campsites, ...). Ordered by priority.
 struct WifiNet { String ssid; String pass; };
 
+struct LayoutSlot {
+  int16_t x;
+  int16_t y;
+  uint8_t scale;  // percent, 100 = default size
+};
+
+enum LayoutWidget : uint8_t {
+  LAYOUT_DAY_CLOCK = 0,
+  LAYOUT_DAY_DATE,
+  LAYOUT_THERMO_CARD,
+  LAYOUT_POWER_GAUGE,
+  LAYOUT_POWER_STATS,
+  LAYOUT_STATUS_CARD,
+  LAYOUT_WIDGET_COUNT
+};
+
+enum DisplayPage : uint8_t {
+  PAGE_CLOCK = 0,
+  PAGE_CLIMATE,
+  PAGE_POWER,
+  PAGE_STATUS,
+  PAGE_COUNT
+};
+
 struct Settings {
   // Wi-Fi — multiple saved networks; the device auto-joins a known one in range.
   std::vector<WifiNet> networks;
@@ -51,6 +75,22 @@ struct Settings {
   bool dispOffEnable = false; // blank the screen during a window (wake on touch)
   int  dispOffStartHour = 23;
   int  dispOffEndHour = 6;
+  std::array<String, PAGE_COUNT> pageBg = {{
+    "bg_indie_02.jpg",   // Clock
+    "bg_charlie_01.jpg", // Climate
+    "bg_creek_01.jpg",   // Power
+    "bg_indie_01.jpg",   // Status
+  }};
+  std::array<int8_t, PAGE_COUNT> pageTheme = {{ -1, -1, -1, -1 }}; // -1 = Color scheme
+  std::array<bool, PAGE_COUNT> pageBox = {{ false, true, true, true }};
+  std::array<LayoutSlot, LAYOUT_WIDGET_COUNT> layout = {{
+    {14, 30, 100},   // day clock group
+    {12, 12, 100},   // day date
+    {12, 72, 100},   // thermostat card
+    {12, 70, 100},   // power SOC gauge
+    {160, 70, 100},  // power stats card
+    {164, 46, 100},  // status card
+  }};
 
   // BLE device bindings (defaults from gitignored secrets.local.h; else set via web)
   String victronMac = HUCK_VICTRON_MAC;

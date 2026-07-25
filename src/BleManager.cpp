@@ -6,6 +6,15 @@
 #include <mbedtls/aes.h>
 #include <vector>
 
+#ifndef HUCK_DEBUG
+#define HUCK_DEBUG 0
+#endif
+#if HUCK_DEBUG
+#define HDBG(...) Serial.printf(__VA_ARGS__)
+#else
+#define HDBG(...)
+#endif
+
 namespace ble {
 
 static constexpr uint16_t VICTRON_CID = 0x02E1;
@@ -60,15 +69,22 @@ static void parseVictron(const std::vector<uint8_t>& p, int rssi) {
   uint16_t yd = bitsLE(p.data(), p.size(), 48, 16);
   uint16_t pv = bitsLE(p.data(), p.size(), 64, 16);
   uint16_t ld = bitsLE(p.data(), p.size(), 80, 9);
+  float pvW = (pv == 0xFFFF) ? NAN : (float)pv;
   teleLock();
   gTele.solState = state; gTele.solError = err;
   gTele.solBattV = (bv == 0x7FFF) ? NAN : bv * 0.01f;
   gTele.solBattA = (bc == 0x7FFF) ? NAN : bc * 0.1f;
   gTele.solYieldKwh = (yd == 0xFFFF) ? NAN : yd * 0.01f;
-  gTele.solPvW  = (pv == 0xFFFF) ? NAN : (float)pv;
+  gTele.solPvW = pvW;
+  if (!isnan(pvW) && pvW >= 0.0f && (isnan(gTele.solPvMaxW) || pvW > gTele.solPvMaxW)) {
+    gTele.solPvMaxW = pvW;
+    gTele.solPvMaxLastMs = millis();
+  }
   gTele.solLoadA = (ld == 0x1FF) ? NAN : ld * 0.1f;
   gTele.solRssi = rssi; gTele.solValid = true; gTele.solLastMs = millis();
   teleUnlock();
+  HDBG("[BLE] victron pv=%.0fW max=%.0fW state=%u rssi=%d\n",
+       isnan(pvW) ? -1.0f : pvW, isnan(gTele.solPvMaxW) ? -1.0f : gTele.solPvMaxW, state, rssi);
 }
 
 static void handleVictronAdv(const NimBLEAdvertisedDevice* dev) {
@@ -109,10 +125,10 @@ static void jbdNotify(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bo
     s_jbdFrameReady = true;
 }
 
-static void parseJbdBasic(const std::vector<uint8_t>& d) {
-  if (d.size() < 4 || d[0] != 0xDD || d[1] != 0x03) return;
+static bool parseJbdBasic(const std::vector<uint8_t>& d) {
+  if (d.size() < 4 || d[0] != 0xDD || d[1] != 0x03 || d[2] != 0x00) return false;
   int ln = d[3];
-  if ((int)d.size() < 4 + ln) return;
+  if ((int)d.size() < 4 + ln || ln < 20) return false;
   const uint8_t* p = d.data() + 4;
   float volt = ((p[0] << 8) | p[1]) / 100.0f;
   int16_t rawCur = (int16_t)((p[2] << 8) | p[3]);
@@ -120,12 +136,63 @@ static void parseJbdBasic(const std::vector<uint8_t>& d) {
   float resid = ((p[4] << 8) | p[5]) / 100.0f;
   float nom = ((p[6] << 8) | p[7]) / 100.0f;
   int cycles = (p[8] << 8) | p[9];
+  uint16_t protect = (ln > 17) ? ((p[16] << 8) | p[17]) : 0;
+  uint8_t sw = (ln > 18) ? p[18] : 0;
   int soc = (ln > 19) ? p[19] : -1;
+  uint8_t fet = (ln > 20) ? p[20] : 0;
+  int cells = (ln > 21) ? p[21] : -1;
+  int temps = (ln > 22) ? p[22] : -1;
   teleLock();
   gTele.battVolts = volt; gTele.battAmps = cur; gTele.battSoc = soc;
+  gTele.battPowerW = volt * cur;
   gTele.battResidAh = resid; gTele.battNomAh = nom; gTele.battCycles = cycles;
+  gTele.battProtect = protect; gTele.battSw = sw; gTele.battFet = fet;
+  gTele.battCellCount = cells; gTele.battTempCount = temps;
+  for (size_t i = 0; i < HUCK_MAX_BATT_TEMPS; i++) gTele.battTempsC[i] = NAN;
+  if (temps > 0) {
+    for (int i = 0; i < temps && i < (int)HUCK_MAX_BATT_TEMPS; i++) {
+      int off = 23 + i * 2;
+      if (off + 1 >= ln) break;
+      uint16_t rawT = (uint16_t)((p[off] << 8) | p[off + 1]);
+      gTele.battTempsC[i] = rawT / 10.0f - 273.15f;
+    }
+  }
   gTele.battValid = true; gTele.battLastMs = millis();
   teleUnlock();
+  HDBG("[BLE] batt basic v=%.2f a=%.2f soc=%d resid=%.2fAh nom=%.2fAh cells=%d temps=%d fet=0x%02x prot=0x%04x\n",
+       volt, cur, soc, resid, nom, cells, temps, fet, protect);
+  return true;
+}
+
+static bool parseJbdCells(const std::vector<uint8_t>& d) {
+  if (d.size() < 4 || d[0] != 0xDD || d[1] != 0x04 || d[2] != 0x00) return false;
+  int ln = d[3];
+  if ((int)d.size() < 4 + ln) return false;
+  const uint8_t* p = d.data() + 4;
+  int cells = ln / 2;
+  if (cells > (int)HUCK_MAX_BATT_CELLS) cells = HUCK_MAX_BATT_CELLS;
+  teleLock();
+  for (size_t i = 0; i < HUCK_MAX_BATT_CELLS; i++) gTele.battCellMv[i] = 0;
+  for (int i = 0; i < cells; i++) {
+    gTele.battCellMv[i] = (uint16_t)((p[i * 2] << 8) | p[i * 2 + 1]);
+  }
+  if (gTele.battCellCount < 0 || gTele.battCellCount > cells) gTele.battCellCount = cells;
+  gTele.battCellLastMs = millis();
+  teleUnlock();
+  HDBG("[BLE] batt cells=%d first=%umV\n", cells, cells > 0 ? (unsigned)((p[0] << 8) | p[1]) : 0);
+  return true;
+}
+
+static bool requestJbdFrame(NimBLERemoteCharacteristic* write, uint8_t cmd, uint32_t timeoutMs = 3000) {
+  uint16_t checksum = (uint16_t)(0x10000 - cmd);
+  uint8_t req[] = {0xDD, 0xA5, cmd, 0x00, (uint8_t)(checksum >> 8), (uint8_t)(checksum & 0xFF), 0x77};
+  s_jbdBuf.clear();
+  s_jbdFrameReady = false;
+  write->writeValue(req, sizeof(req), false);
+  uint32_t t0 = millis();
+  while (!s_jbdFrameReady && millis() - t0 < timeoutMs) vTaskDelay(pdMS_TO_TICKS(20));
+  if (!s_jbdFrameReady) HDBG("[BLE] jbd cmd=0x%02x timeout len=%u\n", cmd, (unsigned)s_jbdBuf.size());
+  return s_jbdFrameReady;
 }
 
 static void pollBattery() {
@@ -141,13 +208,17 @@ static void pollBattery() {
     NimBLERemoteCharacteristic* notify = svc->getCharacteristic(JBD_NOTIFY);
     NimBLERemoteCharacteristic* write = svc->getCharacteristic(JBD_WRITE);
     if (notify && write && notify->canNotify()) {
-      s_jbdBuf.clear(); s_jbdFrameReady = false;
       notify->subscribe(true, jbdNotify);
-      const uint8_t req[] = {0xDD, 0xA5, 0x03, 0x00, 0xFF, 0xFD, 0x77};
-      write->writeValue((uint8_t*)req, sizeof(req), false);
-      uint32_t t0 = millis();
-      while (!s_jbdFrameReady && millis() - t0 < 3000) vTaskDelay(pdMS_TO_TICKS(20));
-      if (s_jbdFrameReady) parseJbdBasic(s_jbdBuf);
+      vTaskDelay(pdMS_TO_TICKS(150));
+      bool gotBasic = false;
+      bool gotCells = false;
+      for (int attempt = 0; attempt < 2 && !gotBasic; attempt++) {
+        if (requestJbdFrame(write, 0x03, 4000)) gotBasic = parseJbdBasic(s_jbdBuf);
+        if (!gotBasic) vTaskDelay(pdMS_TO_TICKS(150));
+      }
+      if (requestJbdFrame(write, 0x04, 4000)) gotCells = parseJbdCells(s_jbdBuf);
+      if (!gotBasic) HDBG("[BLE] batt basic missing, cells=%d len=%u\n", gotCells, (unsigned)s_jbdBuf.size());
+      s_jbdFrameReady = gotBasic || gotCells;
     }
   }
   bool got = s_jbdFrameReady;

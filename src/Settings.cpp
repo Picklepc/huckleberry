@@ -1,15 +1,45 @@
 #include "Settings.h"
 #include <Preferences.h>
+#include <ArduinoJson.h>
 
 Settings gSettings;
 static Preferences prefs;
 
 static const char* NS = "huck";
 
+bool Settings::addNetwork(const String& ssid, const String& pass) {
+  if (ssid.isEmpty()) return false;
+  for (auto& n : networks) {         // update password if SSID already saved
+    if (n.ssid == ssid) { n.pass = pass; return true; }
+  }
+  if (networks.size() >= MAX_NETWORKS) return false;
+  networks.push_back({ssid, pass});
+  return true;
+}
+
+void Settings::removeNetwork(const String& ssid) {
+  for (size_t i = 0; i < networks.size(); i++)
+    if (networks[i].ssid == ssid) { networks.erase(networks.begin() + i); return; }
+}
+
 void Settings::load() {
   prefs.begin(NS, true);
-  wifiSsid = prefs.getString("wSsid", wifiSsid);
-  wifiPass = prefs.getString("wPass", wifiPass);
+  // Networks: stored as a JSON array [{s,p},...]; migrate legacy single SSID.
+  networks.clear();
+  String nets = prefs.getString("nets", "");
+  if (nets.length()) {
+    JsonDocument d;
+    if (!deserializeJson(d, nets)) {
+      for (JsonObject o : d.as<JsonArray>()) {
+        if (networks.size() >= MAX_NETWORKS) break;
+        networks.push_back({ String(o["s"] | ""), String(o["p"] | "") });
+      }
+    }
+  }
+  if (networks.empty()) {  // migrate legacy single-network keys
+    String ls = prefs.getString("wSsid", "");
+    if (ls.length()) networks.push_back({ ls, prefs.getString("wPass", "") });
+  }
   hostname = prefs.getString("host", hostname);
   apPass   = prefs.getString("apPass", apPass);
   tz       = prefs.getString("tz", tz);
@@ -33,8 +63,13 @@ void Settings::load() {
 
 void Settings::save() {
   prefs.begin(NS, false);
-  prefs.putString("wSsid", wifiSsid);
-  prefs.putString("wPass", wifiPass);
+  {
+    JsonDocument d;
+    JsonArray arr = d.to<JsonArray>();
+    for (auto& n : networks) { JsonObject o = arr.add<JsonObject>(); o["s"] = n.ssid; o["p"] = n.pass; }
+    String out; serializeJson(d, out);
+    prefs.putString("nets", out);
+  }
   prefs.putString("host", hostname);
   prefs.putString("apPass", apPass);
   prefs.putString("tz", tz);

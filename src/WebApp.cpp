@@ -72,9 +72,13 @@ details summary{cursor:pointer;color:var(--acc);letter-spacing:2px;font-size:13p
   <div class="row"><span class="k">Solar link</span><span class="v" id="slink">--</span></div>
   <div class="row"><span class="k">Firmware</span><span class="v">v0.2.0-b1</span></div></div>
  <div class="card"><details><summary>Settings</summary>
-  <label>Wi-Fi network (SSID)</label><input id="fssid">
-  <label>Wi-Fi password</label><input id="fpass" type="password" placeholder="(unchanged)">
-  <button class="acc" style="margin-top:10px" onclick="wifi()">Save Wi-Fi &amp; connect</button>
+  <label>Saved Wi-Fi networks (home + campsites)</label>
+  <div id="netlist" class="k">none yet</div>
+  <div class="grid" style="margin-top:8px">
+   <input id="fssid" placeholder="SSID"><input id="fpass" type="password" placeholder="password">
+  </div>
+  <button class="acc" style="margin-top:8px" onclick="addNet()">Add network</button>
+  <p class="k">The trailer auto-joins the first saved network it finds; the <b>Huckleberry</b> hotspot stays on for off-grid.</p>
   <label style="margin-top:14px">Day theme</label><select id="theme" onchange="save()"></select>
   <label>Day brightness</label><input id="bright" type="range" min="10" max="255" oninput="save()">
   <label style="margin-top:8px"><input type="checkbox" id="anim" style="width:auto" onchange="save()"> Animations</label>
@@ -99,13 +103,22 @@ function paint(){
  $('slink').innerHTML=S.sol&&S.sol.valid?'<span class=ok>live ('+S.sol.rssi+'dBm)</span>':'waiting…';
  if(!themeInit){$('theme').innerHTML=S.themes.map((n,i)=>`<option value=${i}>${n}</option>`).join('');themeInit=1}
  $('theme').value=S.set.theme;$('bright').value=S.set.bright;$('anim').checked=S.set.anim;
+ renderNets();
  if(S.time){$('clk').textContent=S.time}
 }
 let themeInit=0;
+function renderNets(){
+ let saved=(S.net&&S.net.saved)||[];
+ if(!saved.length){$('netlist').textContent='none yet';return}
+ $('netlist').innerHTML=saved.map(s=>{
+   let cur=s===S.net.ssid?' <span class=ok>(connected)</span>':'';
+   return `<div class=row><span class=v>${s}${cur}</span><button onclick="rmNet('${s.replace(/'/g,"\\'")}')">remove</button></div>`}).join('')
+}
 function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})}
 function sp(d){S.th.sp=Math.max(45,Math.min(90,(S.th.sp|0)+d));$('set').textContent=S.th.sp;save()}
 function save(){post('/api/settings',`sp=${$('set').textContent}&mode=${$('mode').value}&camp=${$('camp').value}&theme=${$('theme').value}&bright=${$('bright').value}&anim=${$('anim').checked?1:0}`)}
-function wifi(){post('/api/wifi',`ssid=${encodeURIComponent($('fssid').value)}&pass=${encodeURIComponent($('fpass').value)}`).then(()=>alert('Saved. Connecting…'))}
+function addNet(){let s=$('fssid').value;if(!s)return;post('/api/wifi/add',`ssid=${encodeURIComponent(s)}&pass=${encodeURIComponent($('fpass').value)}`).then(()=>{$('fssid').value='';$('fpass').value='';setTimeout(load,500)})}
+function rmNet(s){post('/api/wifi/remove',`ssid=${encodeURIComponent(s)}`).then(()=>setTimeout(load,300))}
 function pushTime(){post('/api/time','epoch='+Math.floor(Date.now()/1000))}
 pushTime();load();setInterval(load,2000);setInterval(pushTime,60000);
 </script></body></html>)HTML";
@@ -136,6 +149,8 @@ static void handleState() {
   n["sta"] = gNet.staConnected; n["ssid"] = gNet.ssid; n["ip"] = gNet.ip;
   n["ap"] = gNet.apActive ? gNet.apSsid : String("");
   n["tsrc"] = gNet.timeSource;
+  auto saved = n["saved"].to<JsonArray>();
+  for (auto& w : gSettings.networks) saved.add(w.ssid);
   auto st = d["set"].to<JsonObject>();
   st["theme"] = gSettings.dayThemeIdx; st["bright"] = gSettings.dayBrightness; st["anim"] = gSettings.animations;
   auto themes = d["themes"].to<JsonArray>();
@@ -165,13 +180,20 @@ static void handleSettings() {
   server.send(200, "text/plain", "ok");
 }
 
-static void handleWifi() {
-  gSettings.wifiSsid = server.arg("ssid");
-  if (server.hasArg("pass") && server.arg("pass").length()) gSettings.wifiPass = server.arg("pass");
+static void handleWifiAdd() {
+  String ssid = server.arg("ssid");
+  if (ssid.length()) {
+    gSettings.addNetwork(ssid, server.arg("pass"));
+    gSettings.save();
+    net::reconnect();
+  }
+  server.send(200, "text/plain", "ok");
+}
+
+static void handleWifiRemove() {
+  gSettings.removeNetwork(server.arg("ssid"));
   gSettings.save();
   server.send(200, "text/plain", "ok");
-  delay(200);
-  WiFi.begin(gSettings.wifiSsid.c_str(), gSettings.wifiPass.c_str());
 }
 
 static void handleTime() {
@@ -183,7 +205,8 @@ void begin() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html", PAGE); });
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/settings", HTTP_POST, handleSettings);
-  server.on("/api/wifi", HTTP_POST, handleWifi);
+  server.on("/api/wifi/add", HTTP_POST, handleWifiAdd);
+  server.on("/api/wifi/remove", HTTP_POST, handleWifiRemove);
   server.on("/api/time", HTTP_POST, handleTime);
   server.onNotFound([] {  // captive-portal friendliness in AP mode
     server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/");

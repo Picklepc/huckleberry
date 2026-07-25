@@ -13,9 +13,18 @@ namespace net {
 static DNSServer  s_dns;
 static bool       s_dnsUp = false;
 static bool       s_mdnsUp = false;
-static uint32_t   s_lastStaTry = 0;
 static bool       s_ntpConfigured = false;
-static const uint32_t STA_RETRY_MS = 20000;
+static const uint32_t ATTEMPT_MS = 9000;   // per-network join timeout
+static int        s_curIdx = -1;           // network we're currently trying
+static uint32_t   s_attemptStart = 0;
+
+static void tryNetwork(int idx) {
+  if (idx < 0 || (size_t)idx >= gSettings.networks.size()) return;
+  s_curIdx = idx;
+  s_attemptStart = millis();
+  const auto& n = gSettings.networks[idx];
+  WiFi.begin(n.ssid.c_str(), n.pass.c_str());
+}
 
 bool timeIsValid() { return time(nullptr) > 1700000000; }
 
@@ -42,16 +51,20 @@ static void startAp() {
 void begin() {
   WiFi.persistent(false);
   WiFi.setHostname(gSettings.hostname.c_str());
-  bool haveCreds = !gSettings.wifiSsid.isEmpty();
-  WiFi.mode(haveCreds ? WIFI_AP_STA : WIFI_AP);   // AP always up for off-grid
+  WiFi.mode(gSettings.hasNetworks() ? WIFI_AP_STA : WIFI_AP);  // AP always up for off-grid
   startAp();
-  if (haveCreds) {
-    WiFi.begin(gSettings.wifiSsid.c_str(), gSettings.wifiPass.c_str());
-    s_lastStaTry = millis();
-  }
+  if (gSettings.hasNetworks()) tryNetwork(0);
   // NTP (takes effect once STA has internet); TZ set for local wall time.
   configTzTime(gSettings.tz.c_str(), "pool.ntp.org", "time.nist.gov");
   s_ntpConfigured = true;
+}
+
+// Call after the saved-network list changes, to restart the join sequence.
+void reconnect() {
+  if (gSettings.hasNetworks()) {
+    if (WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+    tryNetwork(0);
+  }
 }
 
 void loop() {
@@ -60,18 +73,20 @@ void loop() {
   bool sta = WiFi.status() == WL_CONNECTED;
   gNet.staConnected = sta;
   if (sta) {
-    gNet.ssid = gSettings.wifiSsid;
+    gNet.ssid = WiFi.SSID();
     gNet.ip = WiFi.localIP().toString();
     if (!s_mdnsUp) {
       if (MDNS.begin(gSettings.hostname.c_str())) { MDNS.addService("http", "tcp", 80); s_mdnsUp = true; }
     }
-    // NTP may have set the clock — mark source unless a browser already did.
     if (timeIsValid() && gNet.timeSource == "build") { gNet.timeSynced = true; gNet.timeSource = "ntp"; }
   } else {
+    gNet.ssid = "";
     gNet.ip = gNet.apActive ? WiFi.softAPIP().toString() : "";
-    if (!gSettings.wifiSsid.isEmpty() && millis() - s_lastStaTry > STA_RETRY_MS) {
-      s_lastStaTry = millis();
-      WiFi.begin(gSettings.wifiSsid.c_str(), gSettings.wifiPass.c_str());
+    if (s_mdnsUp) { MDNS.end(); s_mdnsUp = false; }
+    // Cycle through saved networks: each gets ATTEMPT_MS to associate.
+    size_t n = gSettings.networks.size();
+    if (n && millis() - s_attemptStart > ATTEMPT_MS) {
+      tryNetwork((s_curIdx + 1) % (int)n);
     }
   }
 }

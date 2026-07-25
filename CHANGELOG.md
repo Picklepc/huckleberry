@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (M2)
+- Multi-STA network memory: save multiple Wi-Fi networks (home + campsites);
+  auto-join a known network in range; add/remove from the web settings page;
+  migrates the previous single-SSID setting. `Huckleberry` AP stays up off-grid.
+
 ## v0.2.0-b1 — Connectivity & live telemetry (M1)
 - Wi-Fi STA + always-on `Huckleberry` AP, captive DNS, mDNS.
 - Web app: dashboard (power/climate/status) + settings; browser + NTP time sync.

@@ -3,6 +3,7 @@
 // settings: full suite with sane defaults. Extended incrementally.
 #include <Arduino.h>
 #include <array>
+#include <vector>
 
 // Device-specific secrets (BLE keys/MACs) live in a gitignored secrets file so
 // they never enter git history. See include/secrets.example.h.
@@ -19,13 +20,20 @@
 #define HUCK_BATTERY_MAC ""
 #endif
 
+// One saved Wi-Fi network (home, campsites, ...). Ordered by priority.
+struct WifiNet { String ssid; String pass; };
+
 struct Settings {
-  // Wi-Fi
-  String wifiSsid;
-  String wifiPass;
+  // Wi-Fi — multiple saved networks; the device auto-joins a known one in range.
+  std::vector<WifiNet> networks;
+  static constexpr size_t MAX_NETWORKS = 8;
   String hostname = "huckleberry";
   String apSsid   = "Huckleberry";   // no MAC suffix (one-off project)
   String apPass   = "";               // open by default for easy setup
+
+  bool addNetwork(const String& ssid, const String& pass);  // add/update by ssid
+  void removeNetwork(const String& ssid);
+  bool hasNetworks() const { return !networks.empty(); }
 
   // Time
   String tz = "PST8PDT,M3.2.0,M11.1.0";  // America/Los_Angeles (Central Valley)

@@ -47,11 +47,11 @@ Show all live data available today:
 - EcoWorthy/JBD: SOC, total voltage, total current, total watts, charging status,
   remaining Ah, nominal Ah, estimated working time, temperature sensors, cycles,
   FET bits, protection bits, software version, cell count, and per-cell mV/V.
-- Victron Instant Readout: PV watts, observed PV max, percent of observed max,
+- Victron Instant Readout: PV watts, charger-stored daily peak, percent of that peak,
   charger state, solar battery voltage/current, load current, yield today, RSSI,
   and error state if decoded.
-- Make clear that the current solar max is an observed live peak since boot, not
-  the deeper VictronConnect historical max yet.
+- Use the charger-owned daily peak from the connected Victron history rather
+  than learning a temporary maximum since Huckleberry booted.
 - Future Victron deep data: add detailed history once the richer BLE protocol is
   understood and the Bluetooth connection is stable enough to justify it.
 

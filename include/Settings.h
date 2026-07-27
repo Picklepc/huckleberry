@@ -16,6 +16,9 @@
 #ifndef HUCK_VICTRON_KEY
 #define HUCK_VICTRON_KEY ""
 #endif
+#ifndef HUCK_VICTRON_PIN
+#define HUCK_VICTRON_PIN ""
+#endif
 #ifndef HUCK_BATTERY_MAC
 #define HUCK_BATTERY_MAC ""
 #endif
@@ -83,6 +86,10 @@ struct Settings {
   }};
   std::array<int8_t, PAGE_COUNT> pageTheme = {{ -1, -1, -1, -1 }}; // -1 = Color scheme
   std::array<bool, PAGE_COUNT> pageBox = {{ false, true, true, true }};
+  // Contrast helper for pages that overlay text on busy backgrounds:
+  // 0 = none, 1 = text shadow, 2 = dark halo (thick outline). Applied to
+  // day-mode labels only; night clock stays locked.
+  std::array<uint8_t, PAGE_COUNT> pageContrast = {{ 0, 0, 0, 0 }};
   std::array<LayoutSlot, LAYOUT_WIDGET_COUNT> layout = {{
     {14, 30, 100},   // day clock group
     {12, 12, 100},   // day date
@@ -95,9 +102,14 @@ struct Settings {
   // BLE device bindings (defaults from gitignored secrets.local.h; else set via web)
   String victronMac = HUCK_VICTRON_MAC;
   String victronKey = HUCK_VICTRON_KEY;   // 16-byte hex
+  String victronPin = HUCK_VICTRON_PIN;   // 6-digit BLE pairing passkey
   String batteryMac = HUCK_BATTERY_MAC;
   String gidroxMac  = "";     // TBD when unit arrives
   bool   bleEnabled = true;
+
+  // Web app accent color (hex "#RRGGBB"); empty = the default orange.
+  // Applied via CSS custom property in the served SPA. On-device UI unaffected.
+  String webAccent = "";
 
   // Thermostat (Gidrox) — control layer TBD (BLE)
   int  setpointF = 70;

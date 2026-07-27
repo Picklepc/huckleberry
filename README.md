@@ -10,9 +10,20 @@ status. Off-grid it runs fully independently; at home it joins Wi-Fi for time,
 updates, and battery maintenance.
 
 ## Current release
-**v0.2.0** is the first official M2 field release. It has been built, flashed by
-USB, then verified and updated over Wi-Fi OTA on the trailer at
-`huckleberry.local` / `192.168.1.146`.
+**v0.4.0 — Victron power center.** Adds **connected** Victron SmartSolar reads
+over BLE (6-digit PIN via passkey pairing): exact model, serial, firmware,
+yesterday's yield/peak, and the charger's 31-day history, refreshed every 15
+minutes. The Power page is rebuilt around round dashboard gauges, a
+VictronConnect-style daily-history table, 30-day trend charts, and detail cards.
+Inside temperature (from the pack sensor) now shows on the clock, dashboard, and
+thermostat. See **[docs/VICTRON_INTEGRATION.md](docs/VICTRON_INTEGRATION.md)** to
+add Victron support to a clone (instant vs. PIN data, protocol, storage).
+
+Built on **v0.3.0** (M2.1): the web app in six sections (Dashboard, Power,
+Display, Network, BLE, Firmware) with a per-page display editor, live preview,
+per-page reset, seasonal presets, a page-contrast helper, and a configurable web
+accent color. Prior field release **v0.2.0** was USB-flashed and OTA-verified on
+the trailer at `huckleberry.local`.
 
 ## Features (current)
 - Seven-segment LED clock, landscape, **auto day/night** (night = black/white,

@@ -24,7 +24,10 @@ static LayoutSlot clampSlot(LayoutWidget w, LayoutSlot slot) {
     {252, 130}, {230, 24}, {158, 132}, {294, 138}, {146, 132}, {154, 152}
   };
   static const uint8_t minScale[LAYOUT_WIDGET_COUNT] = {70, 70, 75, 75, 75, 75};
-  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {135, 140, 150, 125, 150, 150};
+  // Actual per-widget max at position (0,0): floor(min(320/w, 240/h) * 100).
+  // Above this the LVGL transform_zoom pushes rendered pixels past the tile
+  // boundary and the widget disappears.
+  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {126, 139, 181, 108, 181, 157};
   int idx = (int)w;
   slot.scale = clampInt(slot.scale, minScale[idx], maxScale[idx]);
   int scaledW = ((int)dims[idx][0] * slot.scale + 99) / 100;
@@ -92,11 +95,13 @@ void Settings::load() {
     snprintf(kb, sizeof(kb), "bg%u", (unsigned)i);
     pageBg[i] = prefs.getString(kb, pageBg[i]);
     if (pageBg[i] == "bg_jewel_01.jpg") pageBg[i] = "bg_charlie_01.jpg";
-    char kt[8], kbox[8];
+    char kt[8], kbox[8], kc[8];
     snprintf(kt, sizeof(kt), "pt%u", (unsigned)i);
     snprintf(kbox, sizeof(kbox), "pb%u", (unsigned)i);
+    snprintf(kc, sizeof(kc), "pc%u", (unsigned)i);
     pageTheme[i] = (int8_t)clampInt(prefs.getInt(kt, pageTheme[i]), -1, 15);
     pageBox[i] = prefs.getBool(kbox, pageBox[i]);
+    pageContrast[i] = (uint8_t)clampInt(prefs.getInt(kc, pageContrast[i]), 0, 2);
   }
   int bgRev = prefs.getInt("bgRev", 0);
   if (bgRev < 1 && pageBg[PAGE_CLOCK] == "bg_flower_01.jpg") {
@@ -129,8 +134,10 @@ void Settings::load() {
   for (size_t i = 0; i < layout.size(); i++) {
     layout[i] = clampSlot((LayoutWidget)i, layout[i]);
   }
+  webAccent = prefs.getString("wAcc", webAccent);
   victronMac = prefs.getString("vMac", victronMac);
   victronKey = prefs.getString("vKey", victronKey);
+  victronPin = prefs.getString("vPin", victronPin);
   batteryMac = prefs.getString("bMac", batteryMac);
   gidroxMac  = prefs.getString("gMac", gidroxMac);
   bleEnabled = prefs.getBool("ble", bleEnabled);
@@ -171,12 +178,15 @@ void Settings::save() {
     char kb[8];
     snprintf(kb, sizeof(kb), "bg%u", (unsigned)i);
     prefs.putString(kb, pageBg[i]);
-    char kt[8], kbox[8];
+    char kt[8], kbox[8], kc[8];
     snprintf(kt, sizeof(kt), "pt%u", (unsigned)i);
     snprintf(kbox, sizeof(kbox), "pb%u", (unsigned)i);
+    snprintf(kc, sizeof(kc), "pc%u", (unsigned)i);
     pageTheme[i] = (int8_t)clampInt(pageTheme[i], -1, 15);
     prefs.putInt(kt, pageTheme[i]);
     prefs.putBool(kbox, pageBox[i]);
+    pageContrast[i] = (uint8_t)clampInt(pageContrast[i], 0, 2);
+    prefs.putInt(kc, pageContrast[i]);
   }
   for (size_t i = 0; i < layout.size(); i++) {
     char kx[8], ky[8], ks[8];
@@ -190,8 +200,10 @@ void Settings::save() {
   }
   prefs.putInt("layRev", LAYOUT_REV);
   prefs.putInt("bgRev", BG_REV);
+  prefs.putString("wAcc", webAccent);
   prefs.putString("vMac", victronMac);
   prefs.putString("vKey", victronKey);
+  prefs.putString("vPin", victronPin);
   prefs.putString("bMac", batteryMac);
   prefs.putString("gMac", gidroxMac);
   prefs.putBool("ble", bleEnabled);

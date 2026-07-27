@@ -1,11 +1,53 @@
 # Changelog
 
 ## Unreleased
-- Web app overhaul: split the current single-page app into Dashboard, Power,
-  Settings, Networking, BLE Manager, and Firmware sections. See
-  `docs/WEB_APP_OVERHAUL.md`.
-- Display presets: save/restore seasonal clock, climate, power, and status page
-  layouts/themes/backgrounds.
+
+## v0.4.0 - Victron power center
+- **Connected Victron SmartSolar over BLE** (6-digit PIN via BLE passkey
+  pairing; no app-layer crypto). Adds exact model, serial number, firmware
+  version, yesterday's yield/peak, battery temperature, plus the charger's
+  31-day history. Extended data refreshes every 15 minutes. An unknown-VREG
+  diagnostic reports which registers a given model actually serves.
+- **Power page redesigned**: round dashboard gauges (SOC / solar / battery flow
+  / load) up top, then a VictronConnect-style **daily-history table** (stacked
+  yield bars segmented by charge stage, tap a day for its detail card), then
+  30-day trend charts, then EcoWorthy and MPPT detail cards at the bottom. Day
+  order is consistent (today at left) across the table and charts.
+- **Inside temperature** derived from the EcoWorthy pack sensor, shown on the
+  clock page, web dashboard, and thermostat tile.
+- **Contrast helper reworked** into a consistent dark-backdrop scrim (0 off /
+  1 medium / 2 solid) that works on any theme or background photo.
+- New `docs/VICTRON_INTEGRATION.md`: instant vs. PIN data, GATT/CBOR protocol,
+  VREG list, and storage math for anyone adding Victron support.
+- Reverse-engineering effort concluded (`docs/VICTRON_RE.md`): connected mode is
+  BLE passkey auth over a CBOR VREG protocol, not a custom crypto handshake.
+
+## v0.3.0-b1 - Web app overhaul (M2.1)
+- Web app restructured into six sections (Dashboard, Power, Display, Network,
+  BLE, Firmware) served as a hash-routed SPA from the device. Existing NVS keys
+  (`bgN`, `ptN`, `pbN`, `lXN`, `lYN`, `lSN`) preserved.
+- Display Settings page: single dropdown selects Clock / Climate / Power /
+  Status; controls for background, X/Y, scale, color theme, data box, contrast
+  helper, plus an approximate 320x240 live preview. Reset-this-page and
+  Reset-all-pages restore background, theme, box, contrast, and layout for the
+  chosen page(s) - the night clock stays locked.
+- Seasonal presets: save the current display state (backgrounds, themes, boxes,
+  contrast, layout, day theme) as a named preset on SPIFFS `/presets/`, then
+  load or delete it. Suggested names: Spring, Christmas, Valentine, Camping,
+  Storage, Minimal.
+- Contrast helper (new `pcN` NVS key, per page): 0 none, 1 forces dark text on
+  the day clock, 2 also forces the data-box panel visible. Prevents the failure
+  mode where a light theme + no data box washed out the clock text on busy
+  JPEG backgrounds.
+- Web accent color (new `wAcc` NVS key): change the web UI accent from the
+  Network tab. On-device UI uses its own display color theme.
+- BLE Manager card: view + set battery MAC, Victron MAC + key, Gidrox MAC, and
+  the BLE-enabled toggle from the web (previously in `secrets.local.h` only).
+- Firmware card: version, free heap, uptime, browser OTA, and CLI hints.
+- New endpoints: `POST /api/reset?page=N`, `GET /api/presets`,
+  `POST /api/preset/{save,load,delete}`, `POST /api/hostname`, `POST /api/ble`.
+- Cleanup: removed nine `-Chaffee` AI-artifact duplicates from src/ and include/
+  (they were already excluded from the build).
 
 ## v0.2.0 - Official M2 field release (2026-07-25)
 - Multi-STA network memory: save multiple Wi-Fi networks (home + campsites);

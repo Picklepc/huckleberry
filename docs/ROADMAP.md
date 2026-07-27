@@ -29,7 +29,7 @@ updating this file.
   selection, per-page theme, data-box toggle, and position/scale settings for
   Clock / Climate / Power / Status.
 - Power center data: EcoWorthy/JBD basic and cell-voltage frames exposed to web;
-  Victron Instant Readout, observed PV max, and percent-of-max exposed to web.
+  Victron Instant Readout, charger-stored daily PV peak, and percent-of-peak.
 - OTA firmware management: browser uploader and `huckleberry_ota` PlatformIO
   environment targeting `huckleberry.local`.
 - Official field verification: USB flash, OTA update, EcoWorthy + Victron live

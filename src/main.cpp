@@ -101,6 +101,8 @@ static bool gNightNow = false;
 static lv_obj_t* gDateLabel = nullptr;
 static lv_obj_t* gAmPmLabel = nullptr;
 static lv_obj_t* gThermoSetLabel = nullptr;
+static lv_obj_t* gThermoTempLabel = nullptr;
+static lv_obj_t* gDayTempLabel = nullptr;
 static lv_obj_t* gPageBg[PAGE_COUNT] = {nullptr, nullptr, nullptr, nullptr};
 static lv_obj_t* gPageBgImg[PAGE_COUNT] = {nullptr, nullptr, nullptr, nullptr};
 static lv_obj_t* gDayClockGroup = nullptr;
@@ -177,7 +179,7 @@ static LayoutSlot clampRuntimeSlot(LayoutWidget w, LayoutSlot slot) {
     {252, 130}, {230, 24}, {158, 132}, {294, 138}, {146, 132}, {154, 152}
   };
   static const uint8_t minScale[LAYOUT_WIDGET_COUNT] = {70, 70, 75, 75, 75, 75};
-  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {135, 140, 150, 125, 150, 150};
+  static const uint8_t maxScale[LAYOUT_WIDGET_COUNT] = {126, 139, 181, 108, 181, 157};
   int idx = (int)w;
   slot.scale = constrain((int)slot.scale, (int)minScale[idx], (int)maxScale[idx]);
   int scaledW = ((int)dims[idx][0] * slot.scale + 99) / 100;
@@ -337,11 +339,16 @@ static bool clockUsesFramelessDarkStyle() {
 static void applyDayHomeTheme() {
   const HuckTheme& t = displayTheme(PAGE_CLOCK);
   const bool frameless = clockUsesFramelessDarkStyle();
-  const bool useBox = gSettings.pageBox[PAGE_CLOCK];
-  const lv_color_t clockText = frameless ? lv_color_hex(0x243016) : t.text_hi;
-  const lv_color_t clockAccent = frameless ? lv_color_hex(0x7A2118) : t.accent;
-  const lv_color_t clockAccent2 = frameless ? lv_color_hex(0x5A3A16) : t.accent2;
-  const lv_color_t dateText = frameless ? lv_color_hex(0x3A2A13) : t.text_hi;
+  const int  contrast = gSettings.pageContrast[PAGE_CLOCK];
+  // Contrast mode >= 1 forces dark text (same idea as frameless indie_02).
+  // Contrast mode >= 2 additionally forces the time-panel visible so text
+  // always has a legible backdrop, even when the user disabled the data box.
+  const bool darkText  = frameless || contrast >= 1;
+  const bool showPanel = gSettings.pageBox[PAGE_CLOCK] || contrast >= 2;
+  const lv_color_t clockText = darkText ? lv_color_hex(0x243016) : t.text_hi;
+  const lv_color_t clockAccent = darkText ? lv_color_hex(0x7A2118) : t.accent;
+  const lv_color_t clockAccent2 = darkText ? lv_color_hex(0x5A3A16) : t.accent2;
+  const lv_color_t dateText = darkText ? lv_color_hex(0x3A2A13) : t.text_hi;
   if (gPageBg[PAGE_CLOCK]) {
     lv_obj_set_style_bg_color(gPageBg[PAGE_CLOCK], t.bg, 0);
     lv_obj_set_style_bg_opa(gPageBg[PAGE_CLOCK], LV_OPA_COVER, 0);
@@ -349,8 +356,8 @@ static void applyDayHomeTheme() {
   if (gDayTimePanel) {
     lv_obj_set_style_bg_color(gDayTimePanel, t.panel, 0);
     lv_obj_set_style_border_color(gDayTimePanel, t.accent, 0);
-    lv_obj_set_style_bg_opa(gDayTimePanel, useBox ? LV_OPA_90 : LV_OPA_0, 0);
-    lv_obj_set_style_border_opa(gDayTimePanel, useBox ? LV_OPA_80 : LV_OPA_0, 0);
+    lv_obj_set_style_bg_opa(gDayTimePanel, showPanel ? LV_OPA_90 : LV_OPA_0, 0);
+    lv_obj_set_style_border_opa(gDayTimePanel, showPanel ? LV_OPA_80 : LV_OPA_0, 0);
   }
   if (gDayGreeting) lv_obj_set_style_text_color(gDayGreeting, clockAccent, 0);
   if (gDayHeartsTop) lv_obj_set_style_text_color(gDayHeartsTop, clockAccent2, 0);
@@ -358,6 +365,7 @@ static void applyDayHomeTheme() {
   if (gDayTimeLabel) lv_obj_set_style_text_color(gDayTimeLabel, clockText, 0);
   if (gDayAmPmLabel) lv_obj_set_style_text_color(gDayAmPmLabel, clockAccent, 0);
   if (gDayDateLabel) lv_obj_set_style_text_color(gDayDateLabel, dateText, 0);
+  if (gDayTempLabel) lv_obj_set_style_text_color(gDayTempLabel, dateText, 0);
 }
 
 static void applyDisplayLayouts() {
@@ -407,14 +415,31 @@ static void applyDayTheme() {
   for (auto* o : gDayPanel) {
     DisplayPage p = pageForObject(o);
     const HuckTheme& t = displayTheme(p);
-    bool useBox = gSettings.pageBox[p];
-    lv_obj_set_style_bg_color(o, t.panel, 0);
-    lv_obj_set_style_bg_opa(o, useBox ? LV_OPA_80 : LV_OPA_0, 0);
-    lv_obj_set_style_border_color(o, t.accent, 0);
-    lv_obj_set_style_border_opa(o, useBox ? LV_OPA_60 : LV_OPA_0, 0);
+    // Contrast helper = strength of the dark backdrop behind card content, so
+    // overlaid text stays legible over any theme or background photo. This is
+    // consistent on every page and every theme: 0 follows the box toggle, 1 is
+    // a medium dark scrim, 2 is a solid dark panel. A fixed dark scrim color is
+    // used (not the theme panel, which can be light) so light theme text always
+    // reads on top.
+    int cm = gSettings.pageContrast[p];
+    bool bordered = gSettings.pageBox[p] || cm >= 1;
+    lv_opa_t bgOpa = cm >= 2 ? LV_OPA_COVER
+                             : (cm >= 1 ? LV_OPA_60
+                                        : (gSettings.pageBox[p] ? LV_OPA_80 : LV_OPA_0));
+    lv_obj_set_style_bg_color(o, cm >= 1 ? lv_color_hex(0x120C05) : t.panel, 0);
+    lv_obj_set_style_bg_opa(o, bgOpa, 0);
+    lv_obj_set_style_border_color(o, cm >= 1 ? lv_color_hex(0x3A2A12) : t.accent, 0);
+    lv_obj_set_style_border_opa(o, bordered ? LV_OPA_60 : LV_OPA_0, 0);
   }
-  for (auto* o : gDayAccent) lv_obj_set_style_bg_color(o, displayTheme(pageForObject(o)).accent, 0);
-  for (auto* o : gDayHi)     lv_obj_set_style_text_color(o, displayTheme(pageForObject(o)).text_hi, 0);
+  // Accents/highlights keep their theme colors — the backdrop scrim above (not a
+  // forced per-label recolor) provides the contrast, so the page reads as one
+  // consistent look instead of half the labels flipping to a fixed dark color.
+  for (auto* o : gDayAccent) {
+    lv_obj_set_style_bg_color(o, displayTheme(pageForObject(o)).accent, 0);
+  }
+  for (auto* o : gDayHi) {
+    lv_obj_set_style_text_color(o, displayTheme(pageForObject(o)).text_hi, 0);
+  }
 }
 
 static void applyAllThemes() {
@@ -501,10 +526,12 @@ static void buildClockTile(lv_obj_t* tile) {
   lv_obj_set_style_border_width(gDayTimePanel, 2, 0);
   lv_obj_clear_flag(gDayTimePanel, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
+  // Center the whole "12:34 PM" group in the time panel: the time is centered
+  // with a small leftward nudge to reserve room, and AM/PM is pinned next to it.
   gDayTimeLabel = mkLabel(gDayTimePanel, "--:--", &lv_font_montserrat_40,
-                          dayTheme().text_hi, LV_ALIGN_LEFT_MID, 16, -1);
+                          dayTheme().text_hi, LV_ALIGN_CENTER, -18, -1);
   gDayAmPmLabel = mkLabel(gDayTimePanel, "AM", &lv_font_montserrat_18,
-                          dayTheme().accent, LV_ALIGN_RIGHT_MID, -14, -10);
+                          dayTheme().accent, LV_ALIGN_CENTER, 74, -10);
   gDayHeartsBottom = mkLabel(gDayClockGroup, hearts, &huck_font_heart_18,
                              dayTheme().accent2, LV_ALIGN_BOTTOM_MID, 0, -2);
   lv_obj_set_style_text_letter_space(gDayHeartsBottom, 10, 0);
@@ -514,6 +541,11 @@ static void buildClockTile(lv_obj_t* tile) {
   lv_obj_set_width(gDayDateLabel, 230);
   lv_obj_set_style_text_align(gDayDateLabel, LV_TEXT_ALIGN_LEFT, 0);
   trackDayOnly(gDayDateLabel);
+
+  gDayTempLabel = mkLabel(tile, "--\xC2\xB0", &lv_font_montserrat_16, dayTheme().text_hi,
+                          LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_set_style_text_align(gDayTempLabel, LV_TEXT_ALIGN_RIGHT, 0);
+  trackDayOnly(gDayTempLabel);
   gBuildingHome = false;
 }
 
@@ -527,6 +559,9 @@ static void buildThermoTile(lv_obj_t* tile) {
                             LV_ALIGN_TOP_MID, 0, 4);
   trackHi(gThermoSetLabel);
   mkLabel(card, "SET POINT", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_MID, 0, 48);
+  gThermoTempLabel = mkLabel(card, "inside --\xC2\xB0", &lv_font_montserrat_16, dayTheme().text_hi,
+                             LV_ALIGN_TOP_MID, 0, 64);
+  trackHi(gThermoTempLabel);
 
   lv_obj_t* minus = lv_btn_create(card);
   lv_obj_set_size(minus, 44, 42);
@@ -580,7 +615,7 @@ static void buildBatteryTile(lv_obj_t* tile) {
   mkLabel(card, "Solar", &lv_font_montserrat_12, dayTheme().accent2, LV_ALIGN_TOP_LEFT, 12, 8);
   gBSolarW = mkLabel(card, "-- W", &lv_font_montserrat_20, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 12, 24);
   trackHi(gBSolarW);
-  gBSolarPct = mkLabel(card, "learning max", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_LEFT, 12, 52);
+  gBSolarPct = mkLabel(card, "history pending", &lv_font_montserrat_12, dayTheme().text, LV_ALIGN_TOP_LEFT, 12, 52);
   mkLabel(card, "Battery net", &lv_font_montserrat_12, dayTheme().accent2, LV_ALIGN_TOP_LEFT, 12, 76);
   gBNetW = mkLabel(card, "-- W", &lv_font_montserrat_18, dayTheme().text_hi, LV_ALIGN_TOP_LEFT, 12, 92);
   trackHi(gBNetW);
@@ -620,11 +655,12 @@ static void updateDataTiles() {
     lv_label_set_text(gBSolarW, b);
   }
   if (gBSolarPct) {
-    if (t.solValid && !isnan(t.solPvW) && !isnan(t.solPvMaxW) && t.solPvMaxW > 0.5f) {
-      int pct = constrain((int)lroundf(t.solPvW * 100.0f / t.solPvMaxW), 0, 999);
-      snprintf(b, sizeof(b), "%d%% of %.0fW max", pct, t.solPvMaxW);
+    float monthlyPeakW = victronHistoryPeakPowerW();
+    if (t.solValid && !isnan(t.solPvW) && !isnan(monthlyPeakW) && monthlyPeakW > 0.5f) {
+      int pct = constrain((int)lroundf(t.solPvW * 100.0f / monthlyPeakW), 0, 100);
+      snprintf(b, sizeof(b), "%d%% of %.0fW 31d", pct, monthlyPeakW);
     } else {
-      snprintf(b, sizeof(b), t.solValid ? "learning max" : "waiting");
+      snprintf(b, sizeof(b), t.solValid ? "history pending" : "waiting");
     }
     lv_label_set_text(gBSolarPct, b);
   }
@@ -648,6 +684,17 @@ static void updateDataTiles() {
                t.solValid ? s : "solar wait");
     }
     lv_label_set_text(gBChargeState, b);
+  }
+
+  if (gDayTempLabel) {
+    if (!isnan(t.insideTempF)) snprintf(b, sizeof(b), "%d\xC2\xB0", (int)lroundf(t.insideTempF));
+    else snprintf(b, sizeof(b), "--\xC2\xB0");
+    lv_label_set_text(gDayTempLabel, b);
+  }
+  if (gThermoTempLabel) {
+    if (!isnan(t.insideTempF)) snprintf(b, sizeof(b), "inside %d\xC2\xB0", (int)lroundf(t.insideTempF));
+    else snprintf(b, sizeof(b), "inside --\xC2\xB0");
+    lv_label_set_text(gThermoTempLabel, b);
   }
 
   if (gStWifi) lv_label_set_text(gStWifi, gNet.staConnected ? "connected" : "offline");
@@ -819,7 +866,6 @@ void loop() {
     lastData = now;
     updateDataTiles();
   }
-
   // Inactivity -> snap back to the home clock page (configurable).
   uint32_t timeoutMs = (uint32_t)(gSettings.homeTimeoutSec > 0 ? gSettings.homeTimeoutSec : 60) * 1000;
   if (gTileview && lv_disp_get_inactive_time(nullptr) > timeoutMs && lv_obj_get_scroll_x(gTileview) != 0) {

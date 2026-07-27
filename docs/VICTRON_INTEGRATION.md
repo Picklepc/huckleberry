@@ -94,7 +94,7 @@ Some are model-dependent — the **unknown-VREG diagnostic** (serial log
 | VREG | Meaning | Encoding |
 |---|---|---|
 | `0x0100` | Product ID | u16 |
-| `0x0102` | Firmware version* | hex-BCD, `0x017400` → v1.74 |
+| `0x0102` | **Charger** firmware version* | hex-BCD, `0x017400` → v1.74 |
 | `0x010A` | Serial number | ASCII |
 | `0x010B` | Model name | ASCII |
 | `0x0201` | Device state | u8 |
@@ -111,6 +111,13 @@ Some are model-dependent — the **unknown-VREG diagnostic** (serial log
 
 *candidate on the 75/15; `0xEDBD` (panel current) is **rejected** by the 75/15 —
 Huckleberry computes PV current as PV watts ÷ PV volts instead.
+
+> **Note — two firmwares.** VictronConnect shows a *charger* firmware (e.g.
+> v1.74, VREG `0x0102`) **and** a separate *SmartSolar Bluetooth* firmware (e.g.
+> v2.52). The MPPT does **not** expose a standard GATT Device Information Service
+> (`0x180A`) — its service list is `1800 / 1801 / 68c1… / 9758… / 306b…` only —
+> so the BLE-module firmware is **not** readable over standard BLE; it lives
+> behind Victron's proprietary protocol. Only the charger firmware is surfaced.
 
 ### Daily history record (VREG `0x1050+age`, 34 bytes)
 

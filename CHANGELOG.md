@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.5.0 - Normalized gauges
+- **Combined SOC gauge**: the first round gauge now shows battery **percentage**
+  (real SOC from the JBD BMS) as the main value, with **voltage as subtext**
+  below — matching the shared design used across the Huckleberry and mervyns
+  apps.
+- **Bidirectional battery-current gauge**: the battery-flow dial now fills from
+  center — right for charge, left for discharge — with a leaf (charge) / bolt
+  (discharge) icon that follows net flow.
+- **Dashboard gauges**: the four Power-page header gauges (SOC / solar /
+  battery current / load) now also appear on the main dashboard, between the
+  Climate and Health cards.
+- **Power page order**: the Victron SmartSolar detail card now comes first, with
+  the EcoWorthy battery detail card moved below it.
+
 ## v0.4.0 - Victron power center
 - **Connected Victron SmartSolar over BLE** (6-digit PIN via BLE passkey
   pairing; no app-layer crypto). Adds exact model, serial number, firmware

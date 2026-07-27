@@ -61,7 +61,7 @@ struct Telemetry {
   char     solModel[40] = {0};
   // Extended connected device info + energy (deepened data)
   char     solSerial[24] = {0};       // VREG 0x010A, ASCII
-  uint32_t solFwVersion = 0;          // VREG 0x0102, raw (candidate)
+  uint32_t solFwVersion = 0;          // VREG 0x0102, raw (charger firmware)
   float    solYieldYesterdayKwh = NAN;      // VREG 0xEDD1
   float    solMaxPowerYesterdayW = NAN;     // VREG 0xEDD0
   float    solBattTempC = NAN;              // VREG 0xEDEC (external sensor)

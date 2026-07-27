@@ -14,7 +14,7 @@
 
 namespace web {
 
-#define FW_VERSION "v0.4.0"
+#define FW_VERSION "v0.5.0"
 
 static WebServer server(80);
 static bool s_fsOk = false;
@@ -206,6 +206,9 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
 .gaugeUnit{font-size:.62rem;letter-spacing:.13em;text-transform:uppercase;color:#8a7c63}
 .gaugeLabel{font-size:.82rem;color:var(--tx);font-weight:600;letter-spacing:.02em}
 .gaugeScale{width:78%;display:flex;justify-content:space-between;color:#6f6349;font-size:.64rem}
+.gaugeSub{font-size:.74rem;color:var(--tx);font-weight:600;margin-top:1px}
+.gaugeIcon{font-size:1.05rem;line-height:1;margin-bottom:1px}
+.gaugeDial.bidir{background:conic-gradient(from 0deg,var(--acc) 0 var(--dischargeDeg,0deg),#2a1f12 var(--dischargeDeg,0deg) calc(360deg - var(--chargeDeg,0deg)),var(--ok) calc(360deg - var(--chargeDeg,0deg)) 360deg)}
 .vh-detailwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:8px}
 .vh-detail{display:grid;grid-auto-rows:min-content;min-width:min-content}
 .vh-detail .lbl{position:sticky;left:0;background:var(--panel);z-index:2;font-size:.66rem;color:#8a7c63;padding:3px 8px 3px 2px;text-align:right;white-space:nowrap;display:flex;align-items:center;justify-content:flex-end}
@@ -249,6 +252,26 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
     </div>
     <div class="k" style="margin-top:8px">Gidrox 10k BTU &middot; <span id="d-gidrox">not yet paired</span></div>
   </div>
+  <div class="card"><h2>Power flow</h2>
+    <div class="gauges">
+      <div class="gaugePanel">
+        <div class="gaugeDial" id="dg-soc" style="--accent:var(--acc)"><div class="gaugeInner"><div class="gaugeValue" id="dgv-soc">--</div><div class="gaugeUnit">SOC %</div><div class="gaugeSub" id="dgv-socv">--</div></div></div>
+        <div class="gaugeLabel">Battery</div><div class="gaugeScale"><span>0</span><span>100</span></div>
+      </div>
+      <div class="gaugePanel">
+        <div class="gaugeDial" id="dg-pv" style="--accent:var(--ok)"><div class="gaugeInner"><div class="gaugeValue" id="dgv-pv">--</div><div class="gaugeUnit">watts</div></div></div>
+        <div class="gaugeLabel">Solar in</div><div class="gaugeScale"><span>0</span><span id="dgs-pv">--</span></div>
+      </div>
+      <div class="gaugePanel">
+        <div class="gaugeDial bidir" id="dg-bw"><div class="gaugeInner"><div class="gaugeIcon" id="dgi-bw">·</div><div class="gaugeValue" id="dgv-bw">--</div><div class="gaugeUnit">amps</div></div></div>
+        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>use</span><span>charge</span></div>
+      </div>
+      <div class="gaugePanel">
+        <div class="gaugeDial" id="dg-load" style="--accent:var(--acc2)"><div class="gaugeInner"><div class="gaugeValue" id="dgv-load">--</div><div class="gaugeUnit">amps</div></div></div>
+        <div class="gaugeLabel">Load out</div><div class="gaugeScale"><span>0</span><span id="dgs-load">15</span></div>
+      </div>
+    </div>
+  </div>
   <div class="card"><h2>Health</h2>
     <div class="row"><span class="k">Wi-Fi</span><span class="v" id="d-wifi">--</span></div>
     <div class="row"><span class="k">Battery link</span><span class="v" id="d-blink">--</span></div>
@@ -260,7 +283,7 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
   <div class="card"><h2>Power flow</h2>
     <div class="gauges">
       <div class="gaugePanel">
-        <div class="gaugeDial" id="g-soc" style="--accent:var(--acc)"><div class="gaugeInner"><div class="gaugeValue" id="gv-soc">--</div><div class="gaugeUnit">SOC %</div></div></div>
+        <div class="gaugeDial" id="g-soc" style="--accent:var(--acc)"><div class="gaugeInner"><div class="gaugeValue" id="gv-soc">--</div><div class="gaugeUnit">SOC %</div><div class="gaugeSub" id="gv-socv">--</div></div></div>
         <div class="gaugeLabel">Battery</div><div class="gaugeScale"><span>0</span><span>100</span></div>
       </div>
       <div class="gaugePanel">
@@ -268,8 +291,8 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
         <div class="gaugeLabel">Solar in</div><div class="gaugeScale"><span>0</span><span id="gs-pv">--</span></div>
       </div>
       <div class="gaugePanel">
-        <div class="gaugeDial" id="g-bw" style="--accent:var(--acc2)"><div class="gaugeInner"><div class="gaugeValue" id="gv-bw">--</div><div class="gaugeUnit" id="gu-bw">watts</div></div></div>
-        <div class="gaugeLabel" id="gl-bw">Battery flow</div><div class="gaugeScale"><span>use</span><span>charge</span></div>
+        <div class="gaugeDial bidir" id="g-bw"><div class="gaugeInner"><div class="gaugeIcon" id="gi-bw">·</div><div class="gaugeValue" id="gv-bw">--</div><div class="gaugeUnit">amps</div></div></div>
+        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>use</span><span>charge</span></div>
       </div>
       <div class="gaugePanel">
         <div class="gaugeDial" id="g-load" style="--accent:var(--acc2)"><div class="gaugeInner"><div class="gaugeValue" id="gv-load">--</div><div class="gaugeUnit">amps</div></div></div>
@@ -307,36 +330,12 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
       <div class="chartpanel"><h3>Charge-stage duration</h3><div class="micro">Bulk, absorption, and float minutes per day</div><div class="cwrap"><canvas id="vh-stages" class="chart compact"></canvas></div></div>
     </div>
   </div>
-  <div class="card"><h2>EcoWorthy / JBD 280 Ah</h2>
-    <div class="grid">
-      <div>
-        <div class="row"><span class="k">SOC</span><span class="v"><span id="p-soc">--</span>%</span></div>
-        <div class="row"><span class="k">Status</span><span class="v" id="p-bst">--</span></div>
-        <div class="row"><span class="k">Total voltage</span><span class="v" id="p-bv">--</span></div>
-        <div class="row"><span class="k">Total current</span><span class="v" id="p-ba">--</span></div>
-        <div class="row"><span class="k">Power</span><span class="v" id="p-bw">--</span></div>
-        <div class="row"><span class="k">Remaining capacity</span><span class="v" id="p-brc">--</span></div>
-        <div class="row"><span class="k">Available capacity</span><span class="v" id="p-bnc">--</span></div>
-      </div>
-      <div>
-        <div class="row"><span class="k">Remaining time</span><span class="v" id="p-bwt">--</span></div>
-        <div class="row"><span class="k">Temperature</span><span class="v" id="p-btm">--</span></div>
-        <div class="row"><span class="k">Cell count</span><span class="v" id="p-bct">--</span></div>
-        <div class="row"><span class="k">Cycles</span><span class="v" id="p-bcy">--</span></div>
-        <div class="row"><span class="k">FET flags</span><span class="v" id="p-bfet">--</span></div>
-        <div class="row"><span class="k">Protection</span><span class="v" id="p-bpro">--</span></div>
-        <div class="row"><span class="k">SW version</span><span class="v" id="p-bsw">--</span></div>
-      </div>
-    </div>
-    <div class="k" style="margin-top:10px">Single cell voltage</div>
-    <div id="p-cells" class="cells"></div>
-  </div>
   <div class="card"><h2>Victron SmartSolar MPPT</h2>
     <div class="grid">
       <div>
         <div class="row"><span class="k">Model</span><span class="v" id="p-smodel">--</span></div>
         <div class="row"><span class="k">Serial</span><span class="v" id="p-sserial">--</span></div>
-        <div class="row"><span class="k">Firmware</span><span class="v" id="p-sfw">--</span></div>
+        <div class="row"><span class="k">Charger firmware</span><span class="v" id="p-sfw">--</span></div>
         <div class="row"><span class="k">PV watts</span><span class="v" id="p-pv">--</span></div>
         <div class="row"><span class="k">PV voltage</span><span class="v" id="p-pvv">--</span></div>
         <div class="row"><span class="k">PV current</span><span class="v" id="p-pva">--</span></div>
@@ -361,6 +360,30 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
     </div>
     <div class="micro" id="p-sconnected" style="margin-top:8px">Extended read waiting</div>
     <div class="micro" id="p-unkvreg" style="margin-top:4px"></div>
+  </div>
+  <div class="card"><h2>EcoWorthy / JBD 280 Ah</h2>
+    <div class="grid">
+      <div>
+        <div class="row"><span class="k">SOC</span><span class="v"><span id="p-soc">--</span>%</span></div>
+        <div class="row"><span class="k">Status</span><span class="v" id="p-bst">--</span></div>
+        <div class="row"><span class="k">Total voltage</span><span class="v" id="p-bv">--</span></div>
+        <div class="row"><span class="k">Total current</span><span class="v" id="p-ba">--</span></div>
+        <div class="row"><span class="k">Power</span><span class="v" id="p-bw">--</span></div>
+        <div class="row"><span class="k">Remaining capacity</span><span class="v" id="p-brc">--</span></div>
+        <div class="row"><span class="k">Available capacity</span><span class="v" id="p-bnc">--</span></div>
+      </div>
+      <div>
+        <div class="row"><span class="k">Remaining time</span><span class="v" id="p-bwt">--</span></div>
+        <div class="row"><span class="k">Temperature</span><span class="v" id="p-btm">--</span></div>
+        <div class="row"><span class="k">Cell count</span><span class="v" id="p-bct">--</span></div>
+        <div class="row"><span class="k">Cycles</span><span class="v" id="p-bcy">--</span></div>
+        <div class="row"><span class="k">FET flags</span><span class="v" id="p-bfet">--</span></div>
+        <div class="row"><span class="k">Protection</span><span class="v" id="p-bpro">--</span></div>
+        <div class="row"><span class="k">SW version</span><span class="v" id="p-bsw">--</span></div>
+      </div>
+    </div>
+    <div class="k" style="margin-top:10px">Single cell voltage</div>
+    <div id="p-cells" class="cells"></div>
   </div>
 </section>
 <section id="display">
@@ -506,26 +529,36 @@ let S={},VH={days:[]},themeInit=0,userTyping=null,lastVictronConnectedAge=null;
 function $(i){return document.getElementById(i)}
 function setGauge(id,pct){let el=$(id);if(el)el.style.setProperty('--pct',String(320*Math.max(0,Math.min(1,pct||0))))}
 function setAccent(id,col){let el=$(id);if(el)el.style.setProperty('--accent',col)}
-function paintGauges(){
-  // Battery SOC
+function setBidir(id,chargeDeg,dischargeDeg){let el=$(id);if(el){el.style.setProperty('--chargeDeg',Math.round(chargeDeg)+'deg');el.style.setProperty('--dischargeDeg',Math.round(dischargeDeg)+'deg')}}
+// Paint one gauge set. `p` is an id prefix ('' = Power page, 'd' = Dashboard),
+// so the same four gauges can render on both pages.
+function paintGaugeSet(p){
+  if(!$(p+'g-soc'))return;
+  // Battery — SOC % as the main value, resting voltage as the subtext
   let soc=(S.batt&&S.batt.soc>=0)?S.batt.soc:null;
-  $('gv-soc').textContent=soc!=null?soc:'--';setGauge('g-soc',soc!=null?soc/100:0);
+  let bv=(S.batt&&S.batt.v!=null)?S.batt.v:(S.sol&&S.sol.v!=null?S.sol.v:null);
+  $(p+'gv-soc').textContent=soc!=null?soc:'--';
+  $(p+'gv-socv').textContent=bv!=null?bv.toFixed(2)+' V':'--';
+  setGauge(p+'g-soc',soc!=null?soc/100:0);
   // Solar in — full-scale follows the 31-day peak (min 150 W)
   let pv=(S.sol&&S.sol.valid&&S.sol.pv!=null)?S.sol.pv:null;
   let pvMax=Math.max(Math.round((S.sol&&S.sol.monthPeak)||0),150);
-  $('gv-pv').textContent=pv!=null?Math.round(pv):'--';$('gs-pv').textContent=pvMax;
-  setGauge('g-pv',pv!=null?pv/pvMax:0);
-  // Battery flow — signed watts, green charging / orange using, scale ±500 W
-  let bw=(S.batt&&S.batt.w!=null)?S.batt.w:null;
-  $('gv-bw').textContent=bw!=null?((bw>=0?'+':'')+Math.round(bw)):'--';
-  setAccent('g-bw',bw==null?'#8a7c63':(bw>=0.5?'var(--ok)':(bw<=-0.5?'var(--acc)':'#8a7c63')));
-  setGauge('g-bw',bw!=null?Math.abs(bw)/500:0);
+  $(p+'gv-pv').textContent=pv!=null?Math.round(pv):'--';$(p+'gs-pv').textContent=pvMax;
+  setGauge(p+'g-pv',pv!=null?pv/pvMax:0);
+  // Battery current — bidirectional: + charges (green, left), - discharges
+  // (orange, right); icon reflects net flow. Full-scale ±15 A each way.
+  let ba=(S.batt&&S.batt.a!=null)?S.batt.a:(S.sol&&S.sol.a!=null?S.sol.a:null);
+  let cMax=15;
+  $(p+'gv-bw').textContent=ba!=null?((ba>=0?'+':'')+ba.toFixed(1)):'--';
+  setBidir(p+'g-bw', ba!=null&&ba>0?Math.min(1,ba/cMax)*180:0, ba!=null&&ba<0?Math.min(1,Math.abs(ba)/cMax)*180:0);
+  $(p+'gi-bw').textContent=(ba!=null&&ba>0.05)?'🍃':((ba!=null&&ba<-0.05)?'⚡':'·');
   // Load out — amps, scale 0..15 (75/15 load output)
   let la=(S.sol&&S.sol.loadA!=null)?S.sol.loadA:null;
-  $('gv-load').textContent=la!=null?la.toFixed(1):'--';
-  setAccent('g-load',(S.sol&&S.sol.loadOn===false)?'#8a7c63':'var(--acc2)');
-  setGauge('g-load',la!=null?la/15:0);
+  $(p+'gv-load').textContent=la!=null?la.toFixed(1):'--';
+  setAccent(p+'g-load',(S.sol&&S.sol.loadOn===false)?'#8a7c63':'var(--acc2)');
+  setGauge(p+'g-load',la!=null?la/15:0);
 }
+function paintGauges(){paintGaugeSet('');paintGaugeSet('d');}
 function fmt(x,d,u){return (x==null||isNaN(x))?'--':(x.toFixed(d)+(u||''))}
 function fmtTime(h){if(h==null||isNaN(h))return'--';let m=Math.round(h*60);return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0')+'m'}
 // Victron firmware version: the hex digits read as a BCD-style version. 24-bit
@@ -603,8 +636,10 @@ function drawVictronOverview(days){
 function drawBatteryRange(){
   let points=victronDays().filter(point=>Number.isFinite(point.bmin)&&Number.isFinite(point.bmax));if(!points.length){chartEmpty('vh-battery',176);return}
   let frame=chartSetup('vh-battery',176,points.length),scale=chartScale(points.flatMap(point=>[point.bmin,point.bmax]),false),ctx=frame.ctx;drawChartGrid(frame,scale,2);
-  let step=frame.plotW/points.length;
-  points.forEach((point,index)=>{let x=frame.left+step*(index+.5),yMin=scale.y(point.bmin,frame),yMax=scale.y(point.bmax,frame);ctx.strokeStyle=point.age===selectedVictronAge?'#ffe9c8':VH_COLORS.bmax;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(x,yMin);ctx.lineTo(x,yMax);ctx.stroke();ctx.fillStyle=VH_COLORS.bmin;ctx.beginPath();ctx.arc(x,yMin,3,0,Math.PI*2);ctx.fill();ctx.fillStyle=VH_COLORS.bmax;ctx.beginPath();ctx.arc(x,yMax,3,0,Math.PI*2);ctx.fill()});drawDayLabels(frame,points);
+  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64));
+  points.forEach((point,index)=>{let x=frame.left+step*(index+.5),yMin=scale.y(point.bmin,frame),yMax=scale.y(point.bmax,frame);
+    ctx.globalAlpha=point.age===selectedVictronAge?1:.76;ctx.fillStyle=VH_COLORS.bmax;ctx.fillRect(x-barWidth/2,yMax,barWidth,Math.max(2,yMin-yMax));
+    if(point.age===selectedVictronAge){ctx.globalAlpha=1;ctx.strokeStyle='#ffe9c8';ctx.lineWidth=1;ctx.strokeRect(x-barWidth/2-1,yMax-1,barWidth+2,Math.max(3,yMin-yMax+2))}});ctx.globalAlpha=1;drawDayLabels(frame,points);
 }
 function drawStageBars(){
   let points=victronDays();if(!points.length){chartEmpty('vh-stages',176);return}

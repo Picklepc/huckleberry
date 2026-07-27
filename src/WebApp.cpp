@@ -14,7 +14,7 @@
 
 namespace web {
 
-#define FW_VERSION "v0.5.0"
+#define FW_VERSION "v0.5.1"
 
 static WebServer server(80);
 static bool s_fsOk = false;
@@ -1175,6 +1175,39 @@ static void handleVictronHistory() {
   server.sendContent("");
 }
 
+// Downloadable CSV of the Victron 31-day daily history (age_days 0 = today).
+static void handleVictronHistoryCsv() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Content-Disposition", "attachment; filename=huckleberry_victron_history.csv");
+  server.send(200, "text/csv", "");
+  server.sendContent("age_days,seq,yield_kwh,consumed_kwh,batt_min_v,batt_max_v,"
+                     "peak_w,imax_a,pvmax_v,bulk_min,abs_min,float_min,err0,err1,err2,err3\r\n");
+  for (size_t i = 0; i < HUCK_VICTRON_HISTORY_DAYS; i++) {
+    VictronDay day;
+    if (!victronDayCopy(i, day)) continue;
+    if (!day.valid) continue;
+    String row;
+    row.reserve(160);
+    row += day.ageDays;                       row += ',';
+    row += day.sequence;                      row += ',';
+    row += String(day.yieldKwh, 3);           row += ',';
+    row += String(day.consumedKwh, 3);        row += ',';
+    row += String(day.battMinV, 2);           row += ',';
+    row += String(day.battMaxV, 2);           row += ',';
+    row += String(day.peakPowerW, 0);         row += ',';
+    row += String(day.maxBattCurrentA, 1);    row += ',';
+    row += String(day.pvMaxV, 2);             row += ',';
+    row += day.bulkMinutes;                   row += ',';
+    row += day.absorptionMinutes;             row += ',';
+    row += day.floatMinutes;
+    for (size_t e = 0; e < 4; e++) { row += ','; row += static_cast<unsigned int>(day.errors[e]); }
+    row += "\r\n";
+    server.sendContent(row);
+  }
+  server.sendContent("");
+}
+
 static void handleSettings() {
   if (server.hasArg("sp")) gSettings.setpointF = server.arg("sp").toInt();
   if (server.hasArg("mode")) gSettings.mode = server.arg("mode").toInt();
@@ -1441,6 +1474,7 @@ void begin() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html", PAGE); });
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/victron/history", HTTP_GET, handleVictronHistory);
+  server.on("/api/victron/history.csv", HTTP_GET, handleVictronHistoryCsv);
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/reset", HTTP_POST, handleReset);
   server.on("/api/presets", HTTP_GET, handlePresetsList);

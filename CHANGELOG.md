@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.5.1 - Data export + SQL collector
+- **CSV export**: new `GET /api/victron/history.csv` downloads the 31-day daily
+  history as a CSV file (age_days 0 = today).
+- **SQL Server collector** (`tools/victron-collector/`): a Python pull-collector
+  that polls this device (and any others) over HTTP and stores normalized
+  telemetry in a SQL Server Express database — multi-device, with **permanent
+  >31-day retention** (idempotent daily upsert keyed by date; never deletes
+  aged-out rows) so history outlives the charger's 31-day window.
+
 ## v0.5.0 - Normalized gauges
 - **Combined SOC gauge**: the first round gauge now shows battery **percentage**
   (real SOC from the JBD BMS) as the main value, with **voltage as subtext**

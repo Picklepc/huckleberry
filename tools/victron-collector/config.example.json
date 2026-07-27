@@ -1,0 +1,16 @@
+{
+  "database": {
+    "driver": "ODBC Driver 17 for SQL Server",
+    "server": "localhost\\SQLEXPRESS",
+    "database": "VictronTelemetry",
+    "trusted_connection": true,
+    "username": "",
+    "password": ""
+  },
+  "poll_interval_seconds": 60,
+  "http_timeout_seconds": 8,
+  "devices": [
+    { "key": "huckleberry", "name": "Huckleberry", "type": "huckleberry", "host": "http://huckleberry.local" },
+    { "key": "mervyns", "name": "Mervyns", "type": "mervyns", "host": "http://mervyns" }
+  ]
+}

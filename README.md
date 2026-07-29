@@ -10,14 +10,14 @@ status. Off-grid it runs fully independently; at home it joins Wi-Fi for time,
 updates, and battery maintenance.
 
 ## Current release
-**v0.4.0 — Victron power center.** Adds **connected** Victron SmartSolar reads
-over BLE (6-digit PIN via passkey pairing): exact model, serial, firmware,
-yesterday's yield/peak, and the charger's 31-day history, refreshed every 15
-minutes. The Power page is rebuilt around round dashboard gauges, a
-VictronConnect-style daily-history table, 30-day trend charts, and detail cards.
-Inside temperature (from the pack sensor) now shows on the clock, dashboard, and
-thermostat. See **[docs/VICTRON_INTEGRATION.md](docs/VICTRON_INTEGRATION.md)** to
-add Victron support to a clone (instant vs. PIN data, protocol, storage).
+**v0.5.5 — stored Victron trends and VE.Smart external sense.** Huckleberry reads
+the SmartSolar's charger-owned 31-day daily and intraday history, provides
+interactive day charts plus CSV exports, and lets the PC-side SQL collector retain
+only those native records. It also broadcasts fresh EcoWorthy voltage,
+temperature, and shunt current into the charger's VE.Smart network; live
+SmartSolar diagnostics confirm Vsense, Tsense, and Isense acceptance without any
+charge-setting writes. See **[docs/VICTRON_RE.md](docs/VICTRON_RE.md)** for the
+complete protocol and hardware-validation record.
 
 Built on **v0.3.0** (M2.1): the web app in six sections (Dashboard, Power,
 Display, Network, BLE, Firmware) with a per-page display editor, live preview,
@@ -33,6 +33,10 @@ the trailer at `huckleberry.local`.
 - **Web app** (dashboard, settings) served on the device; browser + NTP time sync.
 - **Live BLE telemetry**: Eco-Worthy 280 Ah battery (JBD/Xiaoxiang FF00) and
   Victron SmartSolar MPPT (encrypted *Instant Readout*, decoded on-device).
+- **Native Victron history**: charger-owned daily and half-hour intraday records,
+  interactive charts, CSV exports, and optional stored-only SQL collection.
+- **VE.Smart bridge**: broadcast-only EcoWorthy Vsense, Tsense, and Isense input
+  accepted by the SmartSolar; no charge-control writes.
 - **Background-driven display pages**: SPIFFS JPEG backgrounds, per-page
   background selection, per-page theme, data-box toggle, and position/scale
   layout controls for Clock / Climate / Power / Status.

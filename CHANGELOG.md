@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## v0.5.5 - Stored Victron trends + VE.Smart external sense
+- **Charger-owned intraday history**: authenticated BLE reads now pull the
+  SmartSolar's persistent trend samples, condense them to 48 half-hour bins per
+  day, and save them in SPIFFS. Huckleberry does not retain a live-poll history
+  or five-minute RAM ring.
+- **Power charts and exports**: click-a-day daily/intraday charts use fixed axes,
+  scrolling plot areas, hover/tap values, full-screen expansion, and synchronized
+  older/newer navigation. Daily, selected-day, and all-intraday CSV exports are
+  available from the Power page.
+- **Stored-only SQL collection**: the PC-side collector upserts only native
+  `DailyHistory` and `IntradaySample` records. Gaps while the trailer is away do
+  not create a misleading live telemetry history.
+- **VE.Smart external-sense emulator**: Huckleberry adopts the charger's network
+  over the authenticated session and broadcasts fresh EcoWorthy voltage,
+  temperature, and shunt current as Vsense/Tsense/Isense. Live SmartSolar 75/15
+  diagnostics confirm all three are accepted; the ESP32 never writes charge
+  parameters.
+- **BLE/Wi-Fi reliability**: low-duty passive scans, minute-rate BMS reads,
+  bounded connected backfill, six-hour refreshes, and removal of packet/key probe
+  routes reduce contention and keep sensitive VE.Smart keys out of the API.
+- **Corrections**: battery-current charge/use labels are no longer reversed;
+  unavailable battery temperature is hidden; solar percentage uses the monthly
+  charger-recorded peak instead of a daily or learned RAM peak.
+
 ## v0.5.1 - Data export + SQL collector
 - **CSV export**: new `GET /api/victron/history.csv` downloads the 31-day daily
   history as a CSV file (age_days 0 = today).

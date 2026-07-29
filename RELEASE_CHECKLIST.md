@@ -5,8 +5,11 @@ features). Copy this list into the release PR/notes and check each item. The goa
 is that every major step is validated before it's considered done.
 
 ## Last release validation
-`v0.2.0` was built, USB flashed, OTA flashed, and verified on trailer Wi-Fi on
-2026-07-25. See `docs/RELEASE_0.2.0.md`.
+`v0.5.5` was built for both the USB and OTA environments, OTA flashed, and
+verified on trailer Wi-Fi on 2026-07-29. Live SmartSolar diagnostics confirmed
+Huckleberry's VE.Smart Vsense, Tsense, and Isense records were all accepted.
+The native daily/intraday APIs, CSV exports, and stored-history-only SQL
+collector were also checked before release. See `docs/VICTRON_RE.md`.
 
 ## 1. Code validation
 - [ ] Builds clean: `pio run -e huckleberry` with no errors (drive warnings toward zero).

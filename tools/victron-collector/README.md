@@ -1,7 +1,7 @@
 # Victron Telemetry Collector
 
 Polls one or more ESP32 solar devices (Huckleberry, Mervyns, …) over their
-existing HTTP JSON APIs and stores normalized telemetry in a **SQL Server
+existing HTTP JSON APIs and stores charger-owned history in a **SQL Server
 Express** database — so you keep **more than the charger's 31-day window** and
 can query/report across **multiple devices**.
 
@@ -18,12 +18,12 @@ ESP32 device(s)  ──HTTP/JSON──►  collector.py (this PC)  ──►  SQ
 | Table              | Grain                    | Notes |
 |--------------------|--------------------------|-------|
 | `dbo.Device`       | one row per device       | key, name, model, serial, firmware, last-seen |
-| `dbo.LiveSample`   | one row per poll         | V / A / W / SOC / PV / load / temps / RSSI at poll time (UTC) |
 | `dbo.DailyHistory` | one row per device·day   | Victron daily record: yield, consumed, peak, charge-stage minutes, min/max V. **Upserted** — grows forever, backfills up to 31 days on reconnect. |
-| `dbo.vLatestLive`  | view                     | newest live sample per device |
+| `dbo.IntradaySample` | one row per device·30 min | Charger-stored PV, voltage, current, and temperature trends. Current/finalized days refresh each collector pass; available backfill refreshes every six hours. |
 
-Real SOC is only stored where a BMS exists (Huckleberry); it's `NULL` for
-Victron-only devices (Mervyns).
+Live API values are not inserted into SQL. If the trailer is away from the home
+network for days or weeks, the next successful pass backfills the records still
+stored by the charger instead of treating sparse poll times as a live timeline.
 
 ## One-time setup
 
@@ -69,8 +69,12 @@ That creates task `VictronCollector`. Remove it with:
 Unregister-ScheduledTask -TaskName VictronCollector -Confirm:$false
 ```
 
-Prefer a per-minute trigger instead of a long-running loop? Point a Basic Task
-at `pythonw.exe collector.py --once` on a 1-minute schedule.
+Task registration requires a genuinely elevated Administrator PowerShell. If
+Windows reports `Access is denied`, no task was created; reopen PowerShell with
+**Run as administrator** and rerun `register-task.ps1`.
+
+Prefer a periodic trigger instead of a long-running loop? Point a Basic Task at
+`pythonw.exe collector.py --once` on a 30-minute schedule.
 
 ## Example queries
 
@@ -82,15 +86,13 @@ JOIN VictronTelemetry.dbo.Device d ON d.DeviceId = h.DeviceId
 WHERE d.DeviceKey = 'huckleberry'
 ORDER BY HistDate DESC;
 
--- latest reading from every device
-SELECT * FROM VictronTelemetry.dbo.vLatestLive;
-
--- battery voltage over the last 24h (charting)
-SELECT TsUtc, BatteryV, BatteryA, PvW
-FROM VictronTelemetry.dbo.LiveSample ls
-JOIN VictronTelemetry.dbo.Device d ON d.DeviceId = ls.DeviceId
-WHERE d.DeviceKey = 'mervyns' AND ls.TsUtc >= DATEADD(hour, -24, SYSUTCDATETIME())
-ORDER BY TsUtc;
+-- charger-stored half-hour solar and battery trends
+SELECT SampleTimeUtc, PvPowerW, PvVoltageV, BatteryVoltageV, ChargeCurrentA
+FROM VictronTelemetry.dbo.IntradaySample s
+JOIN VictronTelemetry.dbo.Device d ON d.DeviceId = s.DeviceId
+WHERE d.DeviceKey = 'huckleberry'
+  AND SampleTimeUtc >= DATEADD(day, -7, SYSUTCDATETIME())
+ORDER BY SampleTimeUtc;
 ```
 
 ## Retention: >31-day data is never lost
@@ -113,8 +115,6 @@ full collector pass leaves it untouched.)
 
 - **`DailyHistory.HistDate`** is derived as *(this PC's local date) − age*, which
   assumes the devices are co-located with this PC (same time zone). They are.
-- **`LiveSample.TsUtc`** is the collector's poll time in UTC, deduped per
-  `(device, second)` so re-runs are safe.
 - **Day rollover:** every poll upserts *all* days the device reports, keyed by
   absolute date, using the **device's own current date** (Mervyns' last-packet
   clock) as day-0 when available, else the PC date. So when midnight passes, the
@@ -123,3 +123,16 @@ full collector pass leaves it untouched.)
   the next poll, with no duplicates.
 - Unreachable device → that device is logged and skipped; other devices and the
   next cycle are unaffected.
+
+Older installations may still contain a legacy `dbo.LiveSample` table. The
+current collector never writes to it, and the schema removes its convenience
+view without deleting old rows. Drop the table manually only if those existing
+rows are no longer wanted.
+
+## Collection is not a database backup
+
+The collector and its Scheduled Task run entirely on this PC. They pull the
+ESP32 HTTP APIs and write stored charger rows to SQL Server; the ESP32 never
+connects directly to SQL Server and holds no database credentials.
+`register-task.ps1` does not create a SQL Server `.bak` file or a disaster-
+recovery schedule, which would be a separate PC-side job.

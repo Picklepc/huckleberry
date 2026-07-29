@@ -141,6 +141,11 @@ void Settings::load() {
   batteryMac = prefs.getString("bMac", batteryMac);
   gidroxMac  = prefs.getString("gMac", gidroxMac);
   bleEnabled = prefs.getBool("ble", bleEnabled);
+  vsEnabled  = prefs.getBool("vsEn", vsEnabled);
+  vsNetId    = prefs.getString("vsId", vsNetId);
+  vsNetKey   = prefs.getString("vsKey", vsNetKey);
+  vsNetName  = prefs.getString("vsName", vsNetName);
+  vsSourceAddr = (uint32_t)prefs.getULong("vsSrc", vsSourceAddr);
   setpointF = prefs.getInt("sp", setpointF);
   mode = prefs.getInt("mode", mode);
   camping = prefs.getBool("camp", camping);
@@ -207,6 +212,11 @@ void Settings::save() {
   prefs.putString("bMac", batteryMac);
   prefs.putString("gMac", gidroxMac);
   prefs.putBool("ble", bleEnabled);
+  prefs.putBool("vsEn", vsEnabled);
+  prefs.putString("vsId", vsNetId);
+  prefs.putString("vsKey", vsNetKey);
+  prefs.putString("vsName", vsNetName);
+  prefs.putULong("vsSrc", vsSourceAddr);
   prefs.putInt("sp", setpointF);
   prefs.putInt("mode", mode);
   prefs.putBool("camp", camping);

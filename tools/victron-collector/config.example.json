@@ -7,7 +7,7 @@
     "username": "",
     "password": ""
   },
-  "poll_interval_seconds": 60,
+  "poll_interval_seconds": 1800,
   "http_timeout_seconds": 8,
   "devices": [
     { "key": "huckleberry", "name": "Huckleberry", "type": "huckleberry", "host": "http://huckleberry.local" },

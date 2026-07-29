@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Victron telemetry collector.
+"""Victron stored-history collector.
 
 Polls one or more ESP32 devices (Huckleberry / Mervyns) over their existing
-HTTP JSON APIs and writes normalized rows into a SQL Server Express database.
+HTTP JSON APIs and writes charger-owned daily and intraday history into a SQL
+Server Express database. Live poll snapshots are intentionally not stored.
 Pull model: all configuration lives here, no device firmware changes required.
 
 Usage:
@@ -32,6 +33,8 @@ except ImportError:
     raise
 
 HERE = Path(__file__).resolve().parent
+INTRADAY_BACKFILL_INTERVAL_SECONDS = 6 * 60 * 60
+_last_intraday_backfill: dict[str, float] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -67,80 +70,52 @@ def fetch_json(url: str, timeout: float) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Device adapters -> normalized dicts
+# Device adapters -> normalized stored-history dicts
 #
-# live  -> keys matching dbo.LiveSample columns (snake mapping below)
 # daily -> list of dicts with the raw per-day fields (identical shape on both
 #          devices): age, seq, yield, consumed, bmax, bmin, peak, imax, pvmax,
 #          bulk, abs, float, errors[]
 # --------------------------------------------------------------------------- #
-def _num(v):
-    return v if isinstance(v, (int, float)) else None
-
-
 def adapt_huckleberry(host: str, timeout: float):
     st = fetch_json(f"{host}/api/state", timeout)
     sol = st.get("sol") or {}
-    batt = st.get("batt") or {}
-    th = st.get("th") or {}
-    temps = batt.get("temps") or []
     meta = {
         "model": sol.get("model"),
         "serial": sol.get("serial"),
         "product_id": sol.get("productId"),
         "firmware": st.get("fw"),
     }
-    live = {
-        "BatteryV": _num(batt.get("v")) if batt.get("valid") else _num(sol.get("v")),
-        "BatteryA": _num(batt.get("a")) if batt.get("valid") else _num(sol.get("a")),
-        "BatteryW": _num(batt.get("w")),
-        "Soc": _num(batt.get("soc")) if batt.get("valid") else None,
-        "PvW": _num(sol.get("pv")),
-        "PvV": _num(sol.get("pvV")),
-        "LoadA": _num(sol.get("loadA")),
-        "LoadV": _num(sol.get("loadV")),
-        "LoadOn": bool(sol.get("loadOn")) if sol.get("loadOn") is not None else None,
-        "YieldTodayKwh": _num(sol.get("yield")),
-        "ChargeState": sol.get("state"),
-        "DeviceState": None,
-        "PeakTodayW": _num(sol.get("peakToday")),
-        "MonthPeakW": _num(sol.get("monthPeak")),
-        "InsideTempF": _num(th.get("inside")),
-        "BattTempF": _num(temps[0]) if temps else None,
-        "Rssi": _num(sol.get("rssi")),
-    }
     hist = fetch_json(f"{host}/api/victron/history", timeout)
+    days = hist.get("days") or []
+    trend_index = fetch_json(f"{host}/api/victron/day?age=0", timeout)
+    available_ages = [int(age) for age in trend_index.get("availableAges") or []]
+    if not available_ages:
+        available_ages = [int(day["age"]) for day in days if day.get("intraday")]
+    now = time.monotonic()
+    full_backfill = now - _last_intraday_backfill.get(host, 0) >= INTRADAY_BACKFILL_INTERVAL_SECONDS
+    ages = available_ages if full_backfill else [age for age in available_ages if age <= 1]
+    intraday = []
+    for age in ages:
+        try:
+            if age == 0:
+                intraday.append(trend_index)
+            else:
+                intraday.append(fetch_json(f"{host}/api/victron/day?age={age}", timeout))
+        except Exception:
+            continue
+    if full_backfill:
+        _last_intraday_backfill[host] = now
     # /api/state exposes no calendar date; fall back to the (co-located) PC date.
-    return meta, live, (hist.get("days") or []), None
+    return meta, days, None, intraday
 
 
 def adapt_mervyns(host: str, timeout: float):
     lv = fetch_json(f"{host}/api/live", timeout)
-    bv, ba = _num(lv.get("batteryVoltage")), _num(lv.get("batteryCurrent"))
     meta = {
         "model": lv.get("model"),
         "serial": lv.get("serial"),
         "product_id": lv.get("productId"),
         "firmware": lv.get("fw"),
-    }
-    live = {
-        "BatteryV": bv,
-        "BatteryA": ba,
-        "BatteryW": (bv * ba) if (bv is not None and ba is not None) else None,
-        "Soc": None,  # no BMS on Mervyns
-        "PvW": _num(lv.get("pvPowerWatts")),
-        "PvV": _num(lv.get("pvVoltage")),
-        "LoadA": _num(lv.get("loadCurrent")),
-        "LoadV": _num(lv.get("loadVoltage")),
-        "LoadOn": bool(lv.get("loadOn")) if lv.get("loadOn") is not None else None,
-        "YieldTodayKwh": _num(lv.get("yieldTodayKwh")),
-        "ChargeState": lv.get("chargeStage"),
-        "DeviceState": _num(lv.get("deviceState")),
-        "PeakTodayW": _num(lv.get("peakToday")),
-        "MonthPeakW": _num(lv.get("monthPeak")),
-        "InsideTempF": None,
-        "BattTempF": None,
-        "Rssi": _num(lv.get("rssi")),
     }
     hist = fetch_json(f"{host}/api/history", timeout)
     # Use the device's own clock (which is what its history "age" is relative to)
@@ -153,7 +128,7 @@ def adapt_mervyns(host: str, timeout: float):
             ref_date = plocal.date()
     except (KeyError, ValueError, TypeError):
         pass
-    return meta, live, (hist.get("days") or []), ref_date
+    return meta, (hist.get("days") or []), ref_date, []
 
 
 ADAPTERS = {"huckleberry": adapt_huckleberry, "mervyns": adapt_mervyns}
@@ -182,27 +157,6 @@ def upsert_device(cur, key: str, name: str, host: str, meta: dict, now_utc) -> i
     )
     cur.execute("SELECT DeviceId FROM dbo.Device WHERE DeviceKey = ?", key)
     return cur.fetchone()[0]
-
-
-LIVE_COLS = [
-    "BatteryV", "BatteryA", "BatteryW", "Soc", "PvW", "PvV", "LoadA", "LoadV",
-    "LoadOn", "YieldTodayKwh", "ChargeState", "DeviceState", "PeakTodayW",
-    "MonthPeakW", "InsideTempF", "BattTempF", "Rssi",
-]
-
-
-def insert_live(cur, device_id: int, ts_utc, live: dict) -> None:
-    cols = ", ".join(["DeviceId", "TsUtc"] + LIVE_COLS)
-    marks = ", ".join(["?"] * (2 + len(LIVE_COLS)))
-    # dedup on (DeviceId, TsUtc) so re-runs within the same second are no-ops
-    cur.execute(
-        f"""
-        IF NOT EXISTS (SELECT 1 FROM dbo.LiveSample WHERE DeviceId = ? AND TsUtc = ?)
-            INSERT INTO dbo.LiveSample ({cols}) VALUES ({marks});
-        """,
-        device_id, ts_utc,
-        device_id, ts_utc, *[live.get(c) for c in LIVE_COLS],
-    )
 
 
 def upsert_daily(cur, device_id: int, today: dt.date, days: list) -> int:
@@ -239,6 +193,40 @@ def upsert_daily(cur, device_id: int, today: dt.date, days: list) -> int:
     return n
 
 
+def upsert_intraday(cur, device_id: int, trend_days: list) -> int:
+    count = 0
+    for day in trend_days:
+        interval = day.get("intervalSeconds") or 1800
+        for sample in day.get("samples") or []:
+            timestamp = sample.get("ts")
+            if not isinstance(timestamp, (int, float)):
+                continue
+            sample_time = dt.datetime.fromtimestamp(timestamp, dt.timezone.utc).replace(tzinfo=None)
+            values = (
+                sample.get("outA"), sample.get("pvV"), sample.get("pvW"),
+                sample.get("tempC"), sample.get("battV"), sample.get("chargeA"), interval,
+            )
+            cur.execute(
+                """
+                MERGE dbo.IntradaySample AS t
+                USING (SELECT ? AS DeviceId, ? AS SampleTimeUtc) AS s
+                    ON t.DeviceId = s.DeviceId AND t.SampleTimeUtc = s.SampleTimeUtc
+                WHEN MATCHED THEN UPDATE SET
+                    OutputCurrentA = ?, PvVoltageV = ?, PvPowerW = ?, BatteryTempC = ?,
+                    BatteryVoltageV = ?, ChargeCurrentA = ?, SourceIntervalSeconds = ?,
+                    UpdatedUtc = SYSUTCDATETIME()
+                WHEN NOT MATCHED THEN
+                    INSERT (DeviceId, SampleTimeUtc, OutputCurrentA, PvVoltageV, PvPowerW,
+                            BatteryTempC, BatteryVoltageV, ChargeCurrentA, SourceIntervalSeconds)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                device_id, sample_time, *values,
+                device_id, sample_time, *values,
+            )
+            count += 1
+    return count
+
+
 # --------------------------------------------------------------------------- #
 # Poll cycle
 # --------------------------------------------------------------------------- #
@@ -261,7 +249,7 @@ def poll_once(cfg: dict, conn, dry_run: bool) -> None:
             log(f"[{key}] unknown device type '{dtype}', skipping")
             continue
         try:
-            meta, live, days, ref_date = adapter(host, timeout)
+            meta, days, ref_date, intraday = adapter(host, timeout)
         except Exception as exc:  # unreachable / bad JSON — skip this device
             log(f"[{key}] poll failed: {exc.__class__.__name__}: {exc}")
             continue
@@ -270,18 +258,18 @@ def poll_once(cfg: dict, conn, dry_run: bool) -> None:
         today = ref_date or pc_today
 
         if dry_run:
-            log(f"[{key}] DRY  V={live['BatteryV']} A={live['BatteryA']} "
-                f"PV={live['PvW']}W soc={live['Soc']} days={len(days)} ({meta.get('model')})")
+            log(f"[{key}] DRY  stored daily={len(days)} "
+                f"intraday={sum(len(day.get('samples') or []) for day in intraday)} "
+                f"({meta.get('model')})")
             continue
 
         try:
             cur = conn.cursor()
             device_id = upsert_device(cur, key, name, host, meta, now_utc)
-            insert_live(cur, device_id, now_utc, live)
             nd = upsert_daily(cur, device_id, today, days)
+            ni = upsert_intraday(cur, device_id, intraday)
             conn.commit()
-            log(f"[{key}] ok  live@{now_utc:%H:%M:%S}  daily={nd}  "
-                f"V={live['BatteryV']} A={live['BatteryA']} PV={live['PvW']}W")
+            log(f"[{key}] ok  stored daily={nd} intraday={ni}")
         except Exception as exc:
             conn.rollback()
             log(f"[{key}] db error: {exc.__class__.__name__}: {exc}")
@@ -309,7 +297,7 @@ def main() -> int:
         conn = pyodbc.connect(connection_string(cfg["database"]), timeout=10)
         log(f"connected to {cfg['database']['server']} / {cfg['database']['database']}")
 
-    interval = float(cfg.get("poll_interval_seconds", 60))
+    interval = float(cfg.get("poll_interval_seconds", 1800))
     try:
         while True:
             poll_once(cfg, conn, args.dry_run)

@@ -107,6 +107,18 @@ struct Settings {
   String gidroxMac  = "";     // TBD when unit arrives
   bool   bleEnabled = true;
 
+  // VE.Smart external-sense emulator: broadcasts EcoWorthy voltage, available
+  // temperature, and shunt current into a VictronConnect-created network.
+  // Separate from the Victron Instant Readout key above. The 16-byte network key
+  // is never returned by the API (only a keySet flag). The 48-bit anti-replay
+  // sequence lives in its own NVS namespace (see BleManager), not here, so it
+  // can be reserved cheaply.
+  bool     vsEnabled = false;
+  String   vsNetId = "";       // network ID, exactly 4 hex digits (2 bytes)
+  String   vsNetKey = "";      // network key, exactly 32 hex digits (16 bytes)
+  String   vsNetName = "";     // human-readable label only; never transmitted
+  uint32_t vsSourceAddr = 0;   // stable sender address; 0 = derive once from MAC
+
   // Web app accent color (hex "#RRGGBB"); empty = the default orange.
   // Applied via CSS custom property in the served SPA. On-device UI unaffected.
   String webAccent = "";

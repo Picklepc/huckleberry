@@ -31,38 +31,6 @@ CREATE TABLE dbo.Device (
 );
 GO
 
-/* ---- LiveSample: high-resolution poll-time snapshots ---------------------- */
-IF OBJECT_ID('dbo.LiveSample') IS NULL
-CREATE TABLE dbo.LiveSample (
-    SampleId      BIGINT       IDENTITY(1,1) PRIMARY KEY,
-    DeviceId      INT          NOT NULL
-        REFERENCES dbo.Device(DeviceId),
-    TsUtc         DATETIME2(0) NOT NULL,          -- collector poll time (UTC)
-    BatteryV      FLOAT        NULL,
-    BatteryA      FLOAT        NULL,              -- +charge / -discharge
-    BatteryW      FLOAT        NULL,
-    Soc           FLOAT        NULL,              -- real SOC where a BMS exists (Huckleberry); NULL otherwise
-    PvW           FLOAT        NULL,
-    PvV           FLOAT        NULL,
-    LoadA         FLOAT        NULL,
-    LoadV         FLOAT        NULL,
-    LoadOn        BIT          NULL,
-    YieldTodayKwh FLOAT        NULL,
-    ChargeState   NVARCHAR(24) NULL,
-    DeviceState   INT          NULL,
-    PeakTodayW    FLOAT        NULL,
-    MonthPeakW    FLOAT        NULL,
-    InsideTempF   FLOAT        NULL,              -- Huckleberry (ambient from EcoWorthy sensor)
-    BattTempF     FLOAT        NULL,
-    Rssi          INT          NULL,
-    CONSTRAINT UX_LiveSample_Device_Ts UNIQUE (DeviceId, TsUtc)
-);
-GO
-
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LiveSample_Device_Ts')
-    CREATE INDEX IX_LiveSample_Device_Ts ON dbo.LiveSample (DeviceId, TsUtc DESC);
-GO
-
 /* ---- DailyHistory: one row per device per calendar day -------------------- */
 /* Idempotent by (DeviceId, HistDate). The collector upserts every poll so the
    current day keeps refreshing and a device reconnecting after time away
@@ -93,17 +61,31 @@ CREATE TABLE dbo.DailyHistory (
 );
 GO
 
-/* ---- Convenience view: newest live sample per device ---------------------- */
+/* ---- IntradaySample: charger-owned 30-minute stored trends ---------------- */
+IF OBJECT_ID('dbo.IntradaySample') IS NULL
+CREATE TABLE dbo.IntradaySample (
+    DeviceId             INT          NOT NULL
+        REFERENCES dbo.Device(DeviceId),
+    SampleTimeUtc         DATETIME2(0) NOT NULL,
+    OutputCurrentA        FLOAT        NULL,
+    PvVoltageV            FLOAT        NULL,
+    PvPowerW              FLOAT        NULL,
+    BatteryTempC          FLOAT        NULL,
+    BatteryVoltageV       FLOAT        NULL,
+    ChargeCurrentA        FLOAT        NULL,
+    SourceIntervalSeconds INT          NOT NULL DEFAULT 1800,
+    UpdatedUtc            DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_IntradaySample PRIMARY KEY (DeviceId, SampleTimeUtc)
+);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_IntradaySample_Device_Time')
+    CREATE INDEX IX_IntradaySample_Device_Time
+        ON dbo.IntradaySample (DeviceId, SampleTimeUtc DESC);
+GO
+
+/* v0.5.3 stores only charger-owned history. Remove the legacy convenience
+   view if an older schema created it, but leave old live rows/table untouched. */
 IF OBJECT_ID('dbo.vLatestLive') IS NOT NULL
     DROP VIEW dbo.vLatestLive;
-GO
-CREATE VIEW dbo.vLatestLive AS
-SELECT d.DeviceKey, d.Name, d.Model, d.Serial, ls.*
-FROM dbo.Device d
-CROSS APPLY (
-    SELECT TOP (1) *
-    FROM dbo.LiveSample s
-    WHERE s.DeviceId = d.DeviceId
-    ORDER BY s.TsUtc DESC
-) ls;
 GO

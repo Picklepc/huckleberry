@@ -1,6 +1,8 @@
 #include "WebApp.h"
 #include "Settings.h"
 #include "AppState.h"
+#include "BleManager.h"
+#include "VictronTrends.h"
 #include "Net.h"
 #include "HuckTheme.h"
 
@@ -14,7 +16,7 @@
 
 namespace web {
 
-#define FW_VERSION "v0.5.1"
+#define FW_VERSION "v0.5.5"
 
 static WebServer server(80);
 static bool s_fsOk = false;
@@ -99,6 +101,17 @@ static bool isVictronPin(const String& value) {
   return true;
 }
 
+// True when `value` is exactly `len` hexadecimal digits.
+static bool isHexExact(const String& value, size_t len) {
+  if (value.length() != len) return false;
+  for (size_t i = 0; i < value.length(); i++) {
+    char c = value[i];
+    bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    if (!hex) return false;
+  }
+  return true;
+}
+
 static String bgPath(const String& name) { return String("/bg/") + name; }
 static String presetPath(const String& name) { return String("/presets/") + name + ".json"; }
 
@@ -177,10 +190,35 @@ section.on{display:block}
 .preview .box.noBox{background:transparent;border-color:transparent;text-shadow:0 1px 3px #000,0 0 4px #000}
 .rowlist>div{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #241a0d}
 .rowlist>div:last-child{border-bottom:0}
-.chart{display:block;width:100%;height:220px;background:#0f0a04;border:1px solid #3a2a12;border-radius:10px;margin-top:10px}
+.chart{display:block;width:100%;height:220px;background:#0f0a04;border:1px solid #3a2a12}
 .chart.vh-overview{height:260px;cursor:pointer;touch-action:manipulation}
-.chart.compact{height:176px;margin-top:0}
-.cwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:7px}
+.chart.compact{height:176px}
+.cwrap{display:grid;grid-template-columns:38px minmax(0,1fr);position:relative;min-width:0;margin-top:10px}
+.cwrap.dual{grid-template-columns:38px minmax(0,1fr) 38px}
+.chartscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;min-width:0}
+.chartscroll .chart{margin:0;border-radius:0 10px 10px 0}
+.cwrap.dual .chartscroll .chart{border-radius:0}
+.chartaxis{display:block;width:38px;background:#0f0a04;border:1px solid #3a2a12;pointer-events:none}
+.chartaxis.left{border-radius:10px 0 0 10px;border-right:0}
+.chartaxis.right{display:none;border-radius:0 10px 10px 0;border-left:0}
+.cwrap.dual .chartaxis.right{display:block}
+.charttip{display:none;position:absolute;z-index:4;max-width:210px;padding:6px 8px;border-radius:7px;background:rgba(10,7,3,.96);border:1px solid var(--acc);box-shadow:0 3px 14px #000;color:var(--hi);font-size:10px;line-height:1.45;pointer-events:none;white-space:nowrap}
+.charttip b{color:var(--acc2)}
+.chartexpand{position:absolute;z-index:3;top:6px;right:calc(var(--axis-right,0px) + 6px);padding:4px 7px;border-radius:7px;background:rgba(36,26,13,.9);font-size:10px;line-height:1;color:var(--hi)}
+.chartdaynav{display:none}
+.chartdaynav button{width:34px;height:30px;padding:0;border-radius:8px;background:#241a0d;color:var(--hi);font-size:18px;line-height:1}
+.chartdaynav button:disabled{opacity:.3}
+.chartdaylabel{min-width:190px;color:var(--hi);font-size:13px;font-weight:650;text-align:center;white-space:nowrap}
+.cwrap.dual{--axis-right:38px}
+body.chart-expanded{overflow:hidden}
+.chartpanel.expanded{position:fixed;inset:max(6px,env(safe-area-inset-top)) max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));z-index:1000;display:flex;flex-direction:column;background:#120c05;box-shadow:0 12px 50px #000;padding:48px 12px 12px}
+.chartpanel.expanded .chartdaynav{display:grid;grid-template-columns:34px minmax(190px,auto) 34px;align-items:center;gap:8px;position:absolute;z-index:5;top:8px;left:50%;transform:translateX(-50%)}
+.chartpanel.expanded .cwrap{flex:1;min-height:0}
+.chartpanel.expanded .chartexpand{position:fixed;top:max(14px,calc(env(safe-area-inset-top) + 8px));right:max(14px,calc(env(safe-area-inset-right) + 8px))}
+@media(max-width:520px){.chartdaylabel{min-width:130px;max-width:42vw;overflow:hidden;text-overflow:ellipsis}.chartpanel.expanded{padding-top:80px}.chartpanel.expanded .chartdaynav{grid-template-columns:34px minmax(130px,auto) 34px}.chartpanel.expanded .chartexpand{top:max(50px,calc(env(safe-area-inset-top) + 44px))}}
+.exportActions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.btnlink{display:inline-block;background:#241a0d;color:var(--hi);border:1px solid #3a2a12;border-radius:10px;padding:10px 14px;font-size:14px;text-decoration:none}
+.btnlink.acc{background:var(--acc);color:#1a0f00;border-color:transparent}
 .vh-head{display:flex;justify-content:space-between;align-items:start;gap:16px}
 .vh-head .micro:last-child{text-align:right}
 .vh-legend{display:flex;flex-wrap:wrap;gap:12px;margin:9px 2px 0;font-size:11px;color:#8a7c63}
@@ -264,7 +302,7 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
       </div>
       <div class="gaugePanel">
         <div class="gaugeDial bidir" id="dg-bw"><div class="gaugeInner"><div class="gaugeIcon" id="dgi-bw">·</div><div class="gaugeValue" id="dgv-bw">--</div><div class="gaugeUnit">amps</div></div></div>
-        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>use</span><span>charge</span></div>
+        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>charge</span><span>use</span></div>
       </div>
       <div class="gaugePanel">
         <div class="gaugeDial" id="dg-load" style="--accent:var(--acc2)"><div class="gaugeInner"><div class="gaugeValue" id="dgv-load">--</div><div class="gaugeUnit">amps</div></div></div>
@@ -292,7 +330,7 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
       </div>
       <div class="gaugePanel">
         <div class="gaugeDial bidir" id="g-bw"><div class="gaugeInner"><div class="gaugeIcon" id="gi-bw">·</div><div class="gaugeValue" id="gv-bw">--</div><div class="gaugeUnit">amps</div></div></div>
-        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>use</span><span>charge</span></div>
+        <div class="gaugeLabel">Battery current</div><div class="gaugeScale"><span>charge</span><span>use</span></div>
       </div>
       <div class="gaugePanel">
         <div class="gaugeDial" id="g-load" style="--accent:var(--acc2)"><div class="gaugeInner"><div class="gaugeValue" id="gv-load">--</div><div class="gaugeUnit">amps</div></div></div>
@@ -319,8 +357,23 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
     <div class="vh-daystats" id="vh-daystats"><div class="micro">Waiting for charger history</div></div>
     <div class="vh-errors micro" id="vh-errors">Error history waiting</div>
   </div>
+  <div class="card"><div class="vh-head"><div><h2 id="vi-title">Stored intraday trends</h2>
+      <div class="micro">Charger-owned samples condensed into 30-minute bins. Tap any day above to switch every chart.</div></div>
+      <div class="micro" id="vi-status">waiting for stored trends</div>
+    </div>
+    <div class="micro" style="margin-top:7px">Axes stay fixed while the plot scrolls. Hover or tap for values; use Expand for a full-screen chart.</div>
+    <div class="vh-daystats" id="vi-stats"><div class="micro">Waiting for charger trend samples</div></div>
+    <div class="chartgrid">
+      <div class="chartpanel"><h3>Yield and battery voltage</h3><div class="micro">Half-hour yield (Wh) with battery voltage (V)</div><div class="cwrap"><canvas id="vi-yield" class="chart"></canvas></div></div>
+      <div class="chartpanel"><h3>Solar panel</h3><div class="micro">PV power (W) with panel voltage (V)</div><div class="cwrap"><canvas id="vi-solar" class="chart"></canvas></div></div>
+      <div class="chartpanel"><h3>Battery charging</h3><div class="micro">Charge current (A) with battery voltage (V)</div><div class="cwrap"><canvas id="vi-charge" class="chart"></canvas></div></div>
+      <div class="chartpanel"><h3>DC output current</h3><div class="micro">Controller output current (A)</div><div class="cwrap"><canvas id="vi-output" class="chart"></canvas></div></div>
+      <div class="chartpanel" id="vi-temp-panel" style="display:none"><h3>Battery temperature</h3><div class="micro">External battery-temperature trend when a sensor is present (&deg;C)</div><div class="cwrap"><canvas id="vi-temp" class="chart"></canvas></div></div>
+    </div>
+  </div>
   <div class="card"><h2>30-day trends</h2>
     <div class="micro">The same daily records as the history table, charted over the month (today at left, oldest at right).</div>
+    <div class="micro" style="margin-top:5px">Hover or tap bars for exact values; use Expand for a full-screen chart.</div>
     <div class="chartgrid">
       <div class="chartpanel"><h3>Load consumption</h3><div class="micro">Daily energy used by the load output (kWh)</div><div class="cwrap"><canvas id="vh-consumed" class="chart compact"></canvas></div></div>
       <div class="chartpanel"><h3>Peak solar power</h3><div class="micro">Highest panel power each day (W)</div><div class="cwrap"><canvas id="vh-peak" class="chart compact"></canvas></div></div>
@@ -348,7 +401,7 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
       <div>
         <div class="row"><span class="k">Battery V</span><span class="v" id="p-sv">--</span></div>
         <div class="row"><span class="k">Battery A</span><span class="v" id="p-sa">--</span></div>
-        <div class="row"><span class="k">Battery temp</span><span class="v" id="p-stemp">--</span></div>
+        <div class="row" id="p-stemp-row" style="display:none"><span class="k">Battery temp</span><span class="v" id="p-stemp">--</span></div>
         <div class="row"><span class="k">Battery range today</span><span class="v" id="p-srange">--</span></div>
         <div class="row"><span class="k">Load A</span><span class="v" id="p-sla">--</span></div>
         <div class="row"><span class="k">Load output</span><span class="v" id="p-sload">--</span></div>
@@ -384,6 +437,14 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
     </div>
     <div class="k" style="margin-top:10px">Single cell voltage</div>
     <div id="p-cells" class="cells"></div>
+  </div>
+  <div class="card"><h2>Export Victron data</h2>
+    <div class="micro">CSV downloads are streamed from flash and charger history without creating another RAM history buffer.</div>
+    <div class="exportActions">
+      <a class="btnlink acc" href="/api/victron/history.csv" download>Daily history CSV</a>
+      <a class="btnlink" id="vi-csv-day" href="/api/victron/trends.csv?age=0" download>Selected day intraday CSV</a>
+      <a class="btnlink" href="/api/victron/trends.csv" download>All intraday CSV</a>
+    </div>
   </div>
 </section>
 <section id="display">
@@ -486,6 +547,28 @@ code{background:#0f0a04;padding:1px 5px;border-radius:4px;color:var(--hi);font-s
     <div class="row"><span class="k">Last readout</span><span class="v" id="v-last">--</span></div>
     <div class="micro" style="margin-top:10px">Live solar data uses low-duty passive advertisements. Charger-owned history refreshes after Wi-Fi is stable, then every six hours.</div>
   </div>
+  <div class="card" id="vs-card" style="display:none"><h2>VE.Smart External Sense Emulator</h2>
+    <div class="micro" style="margin-bottom:8px">Shares EcoWorthy battery voltage (Vsense), temperature (Tsense), and shunt current (Isense) with the SmartSolar as an authenticated broadcast-only sensor. Huckleberry never writes charge settings. It reads the VE.Smart network the charger already holds over the PIN connection &mdash; no manual key needed &mdash; then broadcasts only while battery and charger are both live.</div>
+    <div class="row"><span class="k">Charger network</span><span class="v" id="vs-charger">not read yet</span></div>
+    <div class="row"><span class="k">Charger VE.Smart traffic</span><span class="v" id="vs-traffic">not read yet</span></div>
+    <div class="row"><span class="k">Emulator seen by charger</span><span class="v" id="vs-seen">not read yet</span></div>
+    <div class="row"><span class="k">Charger accepted sense</span><span class="v" id="vs-accepted">not read yet</span></div>
+    <div class="grid" style="margin-top:6px"><span></span><button onclick="readVs()">Read from charger now</button></div>
+    <label style="margin-top:8px"><input type="checkbox" id="vs-en" style="width:auto" onchange="saveVs()"> Enable emulator (broadcast to charger)</label>
+    <div class="row"><span class="k">Broadcast</span><span class="v" id="vs-status">--</span></div>
+    <div class="row"><span class="k">Vsense (voltage)</span><span class="v" id="vs-srcv">--</span></div>
+    <div class="row"><span class="k">Tsense (temperature)</span><span class="v" id="vs-srct">--</span></div>
+    <div class="row"><span class="k">Isense (current)</span><span class="v" id="vs-srci">--</span></div>
+    <details style="margin-top:10px"><summary class="micro">Manual network override (only if the charger's key is not readable)</summary>
+      <label>Network name</label>
+      <input id="vs-name" maxlength="30" placeholder="from charger">
+      <label>Network ID (4 hex digits)</label>
+      <input id="vs-id" maxlength="4" placeholder="from charger, e.g. 88f6">
+      <label>Network key (32 hex digits)</label>
+      <div class="grid"><input id="vs-key" type="password" placeholder="hex"><button onclick="saveVs()">Save</button></div>
+    </details>
+    <div class="micro" style="margin-top:10px">The VE.Smart network was created on the SmartSolar in VictronConnect. Huckleberry adopts its ID/key automatically on each connected read (or tap <i>Read from charger now</i>). Broadcasting stops automatically if battery data goes stale; if no temperature probe is present, Tsense is omitted. No-data sentinels are never sent. Huckleberry is a broadcaster only and does not appear as a pairable product in VictronConnect.</div>
+  </div>
   <div class="card"><h2>AC (Gidrox)</h2>
     <label>MAC address</label>
     <div class="grid"><input id="g-mac" placeholder="unpaired"><button onclick="saveBle()">Save</button></div>
@@ -524,8 +607,8 @@ const PAGE_SCALE_MIN=[70,75,75,75];
 // Actual max = floor(min(320/w, 240/h)*100) per page's primary widget.
 const PAGE_SCALE_MAX=[126,181,108,157];
 const PAGE_BG_DEFAULT=['bg_indie_02.jpg','bg_charlie_01.jpg','bg_creek_01.jpg','bg_indie_01.jpg'];
-const RELEASE_NOTES='v0.4.0 (Victron power center): connected SmartSolar reads over BLE (PIN passkey) add serial, firmware, yesterday yield/peak and more. Power page redesigned — round gauges up top, a VictronConnect-style daily-history table (tap a day for details), 30-day trend charts, then EcoWorthy/MPPT detail at the bottom. Inside temperature from the pack sensor now shows on the clock, dashboard, and thermostat. Contrast helper reworked into a consistent dark scrim. Extended data refreshes every 15 min. Also v0.3.0 (M2.1): six-section web app, display preview/presets, configurable accent.';
-let S={},VH={days:[]},themeInit=0,userTyping=null,lastVictronConnectedAge=null;
+const RELEASE_NOTES='v0.5.5: adds the proven VE.Smart external-sense bridge. Huckleberry securely broadcasts fresh EcoWorthy voltage, temperature, and shunt current; live SmartSolar diagnostics confirm Vsense, Tsense, and Isense acceptance. This release also includes charger-owned intraday trends, synchronized expanded charts, CSV exports, corrected current labels, and stored-only SQL collection.';
+let S={},VH={days:[]},VI={samples:[]},themeInit=0,userTyping=null,lastVictronConnectedAge=null,viRequest=0;
 function $(i){return document.getElementById(i)}
 function setGauge(id,pct){let el=$(id);if(el)el.style.setProperty('--pct',String(320*Math.max(0,Math.min(1,pct||0))))}
 function setAccent(id,col){let el=$(id);if(el)el.style.setProperty('--accent',col)}
@@ -576,47 +659,86 @@ function render(){
   if(cur==='power'){loadVictronHistory();requestAnimationFrame(drawVictronHistory)}
 }
 async function load(){try{S=await (await fetch('/api/state')).json();paint()}catch(e){}}
-async function loadVictronHistory(){try{VH=await (await fetch('/api/victron/history')).json();if(activeTab()==='power')drawVictronHistory()}catch(e){}}
+async function loadVictronHistory(){try{VH=await (await fetch('/api/victron/history')).json();if(activeTab()==='power')drawVictronHistory();loadVictronDay(selectedVictronAge)}catch(e){}}
+async function loadVictronDay(age){let request=++viRequest,status=$('vi-status');if(status)status.textContent='loading charger samples';try{let response=await fetch('/api/victron/day?age='+age);if(!response.ok)throw new Error(response.status);let day=await response.json();if(request!==viRequest)return;VI=day}catch(e){if(request!==viRequest)return;VI={age:age,availableAges:VI.availableAges||[],samples:[]}}if(activeTab()==='power')drawVictronIntraday()}
 const VH_COLORS={yield:'#f4791f',consumed:'#9b7bc8',peak:'#d9bd55',pvmax:'#e0aa55',bmin:'#6aaed6',bmax:'#8f7bd6',imax:'#7db56a',bulk:'#f4791f',abs:'#e3bc4f',float:'#6aaed6'};
-let selectedVictronAge=0,victronBarHits=[];
+let selectedVictronAge=0,victronBarHits=[],chartExpanded=null,chartHover={};
 function victronDays(){return(VH.days||[]).slice().sort((a,b)=>a.age-b.age)}
 function victronAgeLabel(age){return age===0?'Today':age===1?'Yesterday':age+' days ago'}
 function victronShortAge(age){return age===0?'Today':'-'+age+'d'}
+function victronDayAges(){let ages=(VI.availableAges||[]).map(Number).filter(Number.isFinite);ages.push(...victronDays().map(day=>Number(day.age)).filter(Number.isFinite));if(Number.isFinite(Number(VI.age))&&(VI.samples||[]).length)ages.push(Number(VI.age));return[...new Set(ages)].sort((a,b)=>a-b)}
+function expandedDayLabel(){return Number(VI.age)===selectedVictronAge&&VI.date?trendDateLabel(VI.date):victronAgeLabel(selectedVictronAge)}
+function moveExpandedDay(direction){let ages=victronDayAges(),index=ages.indexOf(selectedVictronAge),next=ages[index+direction];if(Number.isFinite(next))selectVictronDay(next)}
+function updateExpandedDayNav(){let ages=victronDayAges(),index=ages.indexOf(selectedVictronAge),label=expandedDayLabel();document.querySelectorAll('.chartdaynav').forEach(nav=>{nav.querySelector('.chartdaylabel').textContent=label;nav.querySelector('.chartdayolder').disabled=index<0||index>=ages.length-1;nav.querySelector('.chartdaynewer').disabled=index<=0})}
 function fmtMinutes(minutes){minutes=Math.max(0,Math.round(minutes||0));let h=Math.floor(minutes/60),m=minutes%60;return h?(h+'h '+String(m).padStart(2,'0')+'m'):(m+'m')}
-function chartSetup(id,height,count){
-  let canvas=$(id);if(!canvas)return null;
-  let wrap=canvas.parentElement;
-  let avail=Math.max(250,Math.round((wrap&&wrap.clientWidth)||canvas.clientWidth||600));
-  // Give each day a minimum width; when the total exceeds the viewport the
-  // canvas grows past its .cwrap wrapper and scrolls horizontally (nice on
-  // small/portrait screens), while on wide screens it just fills the width.
-  let width=count?Math.max(avail,52+count*15):avail;
-  canvas.style.width=width+'px';
-  let dpr=Math.min(2,window.devicePixelRatio||1);
-  if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr)}
-  let ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,width,height);
-  return{canvas,ctx,width,height,left:42,right:10,top:14,bottom:27,plotW:width-52,plotH:height-41};
+function hideChartTips(except){document.querySelectorAll('.charttip').forEach(tip=>{if(tip!==except)tip.style.display='none'})}
+function chartPointer(event){
+  let canvas=event.currentTarget,data=chartHover[canvas.id],parts=canvas._chartParts;if(!data||!data.hits.length||!parts)return;
+  let x=event.offsetX,hit=data.hits.reduce((best,item)=>!best||Math.abs(item.x-x)<Math.abs(best.x-x)?item:best,null);
+  if(!hit||Math.abs(hit.x-x)>Math.max(12,data.step*.55)){parts.tip.style.display='none';return}
+  hideChartTips(parts.tip);parts.tip.innerHTML=hit.html;parts.tip.style.display='block';
+  let canvasRect=canvas.getBoundingClientRect(),shellRect=parts.shell.getBoundingClientRect(),localX=canvasRect.left-shellRect.left+hit.x;
+  parts.tip.style.left=Math.max(2,Math.min(parts.shell.clientWidth-parts.tip.offsetWidth-2,localX-parts.tip.offsetWidth/2))+'px';
+  parts.tip.style.top=Math.max(2,Math.min(parts.shell.clientHeight-parts.tip.offsetHeight-2,event.clientY-shellRect.top-parts.tip.offsetHeight-10))+'px';
 }
-function chartEmpty(id,height,message){let f=chartSetup(id,height);if(!f)return;f.ctx.fillStyle='#8a7c63';f.ctx.font='12px system-ui';f.ctx.fillText(message||'Waiting for charger history',14,27)}
+function toggleChartExpand(canvas){
+  let parts=canvas._chartParts;if(!parts)return;let panel=canvas.closest('.chartpanel'),opening=!panel.classList.contains('expanded'),oldWidth=Math.max(1,canvas.clientWidth),ratio=(parts.scroll.scrollLeft+parts.scroll.clientWidth/2)/oldWidth;
+  document.querySelectorAll('.chartpanel.expanded').forEach(item=>item.classList.remove('expanded'));
+  if(opening){panel.classList.add('expanded');chartExpanded=canvas.id;document.body.classList.add('chart-expanded')}else{chartExpanded=null;document.body.classList.remove('chart-expanded')}
+  drawVictronHistory();
+  requestAnimationFrame(()=>{let current=$(canvas.id),currentParts=current&&current._chartParts;if(currentParts){currentParts.scroll.scrollLeft=Math.max(0,ratio*current.clientWidth-currentParts.scroll.clientWidth/2);currentParts.expand.focus()}});
+}
+function ensureChartParts(canvas,height,dual){
+  let parts=canvas._chartParts;
+  if(!parts){
+    let shell=canvas.parentElement,panel=canvas.closest('.chartpanel'),scroll=document.createElement('div'),left=document.createElement('canvas'),right=document.createElement('canvas'),tip=document.createElement('div'),expand=document.createElement('button'),nav=document.createElement('div'),older=document.createElement('button'),label=document.createElement('div'),newer=document.createElement('button');
+    scroll.className='chartscroll';left.className='chartaxis left';right.className='chartaxis right';tip.className='charttip';expand.className='chartexpand';expand.type='button';
+    nav.className='chartdaynav';older.className='chartdayolder';label.className='chartdaylabel';newer.className='chartdaynewer';older.type='button';newer.type='button';older.textContent='\u2039';newer.textContent='\u203a';older.setAttribute('aria-label','Previous stored day');newer.setAttribute('aria-label','Next stored day');nav.appendChild(older);nav.appendChild(label);nav.appendChild(newer);panel.insertBefore(nav,panel.firstChild);
+    shell.insertBefore(left,canvas);shell.insertBefore(scroll,canvas);scroll.appendChild(canvas);shell.appendChild(right);shell.appendChild(tip);shell.appendChild(expand);
+    parts=canvas._chartParts={shell,scroll,left,right,tip,expand,nav,older,label,newer};
+    canvas.addEventListener('pointermove',chartPointer);canvas.addEventListener('pointerdown',chartPointer);canvas.addEventListener('pointerleave',event=>{if(event.pointerType==='mouse')tip.style.display='none'});
+    expand.addEventListener('click',()=>toggleChartExpand(canvas));
+    older.addEventListener('click',()=>moveExpandedDay(1));newer.addEventListener('click',()=>moveExpandedDay(-1));
+  }
+  let expanded=canvas.closest('.chartpanel').classList.contains('expanded');parts.shell.classList.toggle('dual',!!dual);parts.left.style.height=height+'px';parts.right.style.height=height+'px';parts.expand.textContent=expanded?'Close':'Expand';parts.expand.setAttribute('aria-label',parts.expand.textContent+' '+canvas.id+' chart');updateExpandedDayNav();
+  return parts;
+}
+function clearChartAxis(canvas,height){let width=38,dpr=Math.min(2,window.devicePixelRatio||1);canvas.style.width=width+'px';canvas.style.height=height+'px';if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr)}let ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,width,height);return{ctx,width}}
+function chartSetup(id,height,count,dual){
+  let canvas=$(id);if(!canvas)return null;let expanded=canvas.closest('.chartpanel').classList.contains('expanded');if(expanded)height=Math.max(height,Math.min(680,Math.max(300,window.innerHeight-112)));let parts=ensureChartParts(canvas,height,dual),avail=Math.max(210,Math.round(parts.scroll.clientWidth||canvas.clientWidth||600)),pointWidth=expanded?6:15,width=count?Math.max(avail,Math.round(count*pointWidth)):avail;
+  canvas.style.width=width+'px';canvas.style.height=height+'px';let dpr=Math.min(2,window.devicePixelRatio||1);
+  if(canvas.width!==Math.round(width*dpr)||canvas.height!==Math.round(height*dpr)){canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr)}
+  let ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,width,height);clearChartAxis(parts.left,height);clearChartAxis(parts.right,height);parts.tip.style.display='none';
+  return{canvas,ctx,parts,width,height,left:0,right:0,top:14,bottom:27,plotW:width,plotH:height-41};
+}
+function setChartHits(id,hits,step){chartHover[id]={hits:hits||[],step:step||20}}
+function chartEmpty(id,height,message){let f=chartSetup(id,height,0,false);if(!f)return;setChartHits(id,[],20);f.ctx.fillStyle='#8a7c63';f.ctx.font='12px system-ui';f.ctx.fillText(message||'Waiting for charger history',14,27)}
 function chartScale(values,zero){
   let min=Math.min(...values),max=Math.max(...values);
   if(zero){min=0;max=max>0?max*1.08:1}else if(max-min<0.001){let pad=Math.max(.1,Math.abs(max)*.03);min-=pad;max+=pad}else{let pad=(max-min)*.1;min-=pad;max+=pad}
   return{min,max,y:(value,frame)=>frame.top+(max-value)/(max-min)*frame.plotH};
 }
-function drawChartGrid(frame,scale,digits){
-  let ctx=frame.ctx;ctx.strokeStyle='#2d2113';ctx.fillStyle='#8a7c63';ctx.lineWidth=1;ctx.font='9px system-ui';ctx.textAlign='right';
-  for(let i=0;i<=3;i++){let y=frame.top+frame.plotH*i/3;ctx.beginPath();ctx.moveTo(frame.left,y);ctx.lineTo(frame.width-frame.right,y);ctx.stroke();ctx.fillText((scale.max-(scale.max-scale.min)*i/3).toFixed(digits),frame.left-5,y+3)}
-  ctx.textAlign='start';
+function drawChartAxis(canvas,frame,scale,digits,right){
+  let axis=clearChartAxis(canvas,frame.height),ctx=axis.ctx;ctx.fillStyle='#8a7c63';ctx.strokeStyle='#3a2a12';ctx.font='9px system-ui';ctx.textAlign=right?'left':'right';
+  for(let i=0;i<=3;i++){let y=frame.top+frame.plotH*i/3,value=(scale.max-(scale.max-scale.min)*i/3).toFixed(digits);ctx.fillText(value,right?4:axis.width-4,y+3);ctx.beginPath();ctx.moveTo(right?0:axis.width-4,y);ctx.lineTo(right?4:axis.width,y);ctx.stroke()}
+}
+function drawChartGrid(frame,scale,digits,secondary,secondaryDigits){
+  let ctx=frame.ctx;ctx.strokeStyle='#2d2113';ctx.lineWidth=1;
+  for(let i=0;i<=3;i++){let y=frame.top+frame.plotH*i/3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(frame.width,y);ctx.stroke()}
+  drawChartAxis(frame.parts.left,frame,scale,digits,false);if(secondary)drawChartAxis(frame.parts.right,frame,secondary,secondaryDigits,true);
 }
 function drawDayLabels(frame,points){
   let ctx=frame.ctx,count=points.length,step=frame.plotW/count,every=Math.max(1,Math.ceil(count/6));ctx.fillStyle='#8a7c63';ctx.font='9px system-ui';ctx.textAlign='center';
-  points.forEach((point,index)=>{if(index%every===0||index===count-1)ctx.fillText(victronShortAge(point.age),frame.left+step*(index+.5),frame.height-8)});ctx.textAlign='start';
+  points.forEach((point,index)=>{if(index%every===0||index===count-1)ctx.fillText(victronShortAge(point.age),step*(index+.5),frame.height-8)});ctx.textAlign='start';
 }
+const CHART_METRICS={yieldWh:['Yield','Wh'],battV:['Battery voltage','V'],pvW:['PV power','W'],pvV:['PV voltage','V'],chargeA:['Charge current','A'],outA:['Output current','A'],tempC:['Battery temperature','°C'],consumed:['Load consumption','kWh'],peak:['Peak power','W'],pvmax:['Maximum PV voltage','V'],imax:['Maximum charge current','A']};
+function chartValue(key,value,digits){let info=CHART_METRICS[key]||[key,''];return info[0]+': '+Number(value).toFixed(digits)+(info[1]?' '+info[1]:'')}
+function chartTip(title,rows){return'<b>'+title+'</b><br>'+rows.join('<br>')}
 function drawMetricBars(id,key,color,digits){
   let points=victronDays().filter(point=>Number.isFinite(point[key]));if(!points.length){chartEmpty(id,176);return}
-  let frame=chartSetup(id,176,points.length),scale=chartScale(points.map(point=>point[key]),true),ctx=frame.ctx;drawChartGrid(frame,scale,digits);
-  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64)),bottom=frame.top+frame.plotH;
-  points.forEach((point,index)=>{let x=frame.left+step*(index+.5),y=scale.y(point[key],frame);ctx.globalAlpha=point.age===selectedVictronAge?1:.76;ctx.fillStyle=color;ctx.fillRect(x-barWidth/2,y,barWidth,Math.max(1,bottom-y));if(point.age===selectedVictronAge){ctx.strokeStyle='#ffe9c8';ctx.strokeRect(x-barWidth/2-1,y-1,barWidth+2,Math.max(2,bottom-y+2))}});ctx.globalAlpha=1;drawDayLabels(frame,points);
+  let frame=chartSetup(id,176,points.length,false),scale=chartScale(points.map(point=>point[key]),true),ctx=frame.ctx;drawChartGrid(frame,scale,digits);
+  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64)),bottom=frame.top+frame.plotH,hits=[];
+  points.forEach((point,index)=>{let x=step*(index+.5),y=scale.y(point[key],frame);ctx.globalAlpha=point.age===selectedVictronAge?1:.76;ctx.fillStyle=color;ctx.fillRect(x-barWidth/2,y,barWidth,Math.max(1,bottom-y));if(point.age===selectedVictronAge){ctx.strokeStyle='#ffe9c8';ctx.strokeRect(x-barWidth/2-1,y-1,barWidth+2,Math.max(2,bottom-y+2))}hits.push({x,html:chartTip(victronAgeLabel(point.age),[chartValue(key,point[key],digits)])})});ctx.globalAlpha=1;drawDayLabels(frame,points);setChartHits(id,hits,step);
 }
 function drawVictronOverview(days){
   if(!days.length){chartEmpty('vh-overview',260);victronBarHits=[];return}
@@ -635,17 +757,36 @@ function drawVictronOverview(days){
 }
 function drawBatteryRange(){
   let points=victronDays().filter(point=>Number.isFinite(point.bmin)&&Number.isFinite(point.bmax));if(!points.length){chartEmpty('vh-battery',176);return}
-  let frame=chartSetup('vh-battery',176,points.length),scale=chartScale(points.flatMap(point=>[point.bmin,point.bmax]),false),ctx=frame.ctx;drawChartGrid(frame,scale,2);
-  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64));
-  points.forEach((point,index)=>{let x=frame.left+step*(index+.5),yMin=scale.y(point.bmin,frame),yMax=scale.y(point.bmax,frame);
+  let frame=chartSetup('vh-battery',176,points.length,false),scale=chartScale(points.flatMap(point=>[point.bmin,point.bmax]),false),ctx=frame.ctx;drawChartGrid(frame,scale,2);
+  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64)),hits=[];
+  points.forEach((point,index)=>{let x=step*(index+.5),yMin=scale.y(point.bmin,frame),yMax=scale.y(point.bmax,frame);
     ctx.globalAlpha=point.age===selectedVictronAge?1:.76;ctx.fillStyle=VH_COLORS.bmax;ctx.fillRect(x-barWidth/2,yMax,barWidth,Math.max(2,yMin-yMax));
-    if(point.age===selectedVictronAge){ctx.globalAlpha=1;ctx.strokeStyle='#ffe9c8';ctx.lineWidth=1;ctx.strokeRect(x-barWidth/2-1,yMax-1,barWidth+2,Math.max(3,yMin-yMax+2))}});ctx.globalAlpha=1;drawDayLabels(frame,points);
+    if(point.age===selectedVictronAge){ctx.globalAlpha=1;ctx.strokeStyle='#ffe9c8';ctx.lineWidth=1;ctx.strokeRect(x-barWidth/2-1,yMax-1,barWidth+2,Math.max(3,yMin-yMax+2))}hits.push({x,html:chartTip(victronAgeLabel(point.age),['Minimum: '+point.bmin.toFixed(2)+' V','Maximum: '+point.bmax.toFixed(2)+' V'])})});ctx.globalAlpha=1;drawDayLabels(frame,points);setChartHits('vh-battery',hits,step);
 }
 function drawStageBars(){
   let points=victronDays();if(!points.length){chartEmpty('vh-stages',176);return}
-  let totals=points.map(point=>(point.bulk||0)+(point.abs||0)+(point.float||0)),frame=chartSetup('vh-stages',176,points.length),scale=chartScale(totals,true),ctx=frame.ctx;drawChartGrid(frame,scale,0);
-  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64)),bottom=frame.top+frame.plotH;
-  points.forEach((point,index)=>{let x=frame.left+step*(index+.5),cursor=bottom;[[point.bulk||0,VH_COLORS.bulk],[point.abs||0,VH_COLORS.abs],[point.float||0,VH_COLORS.float]].forEach(segment=>{let height=segment[0]/(scale.max-scale.min)*frame.plotH;cursor-=height;ctx.fillStyle=segment[1];ctx.fillRect(x-barWidth/2,cursor,barWidth,Math.max(segment[0]?1:0,height))});if(point.age===selectedVictronAge){let top=scale.y((point.bulk||0)+(point.abs||0)+(point.float||0),frame);ctx.strokeStyle='#ffe9c8';ctx.strokeRect(x-barWidth/2-1,top-1,barWidth+2,Math.max(2,bottom-top+2))}});drawDayLabels(frame,points);
+  let totals=points.map(point=>(point.bulk||0)+(point.abs||0)+(point.float||0)),frame=chartSetup('vh-stages',176,points.length,false),scale=chartScale(totals,true),ctx=frame.ctx;drawChartGrid(frame,scale,0);
+  let step=frame.plotW/points.length,barWidth=Math.max(3,Math.min(18,step*.64)),bottom=frame.top+frame.plotH,hits=[];
+  points.forEach((point,index)=>{let x=step*(index+.5),cursor=bottom;[[point.bulk||0,VH_COLORS.bulk],[point.abs||0,VH_COLORS.abs],[point.float||0,VH_COLORS.float]].forEach(segment=>{let height=segment[0]/(scale.max-scale.min)*frame.plotH;cursor-=height;ctx.fillStyle=segment[1];ctx.fillRect(x-barWidth/2,cursor,barWidth,Math.max(segment[0]?1:0,height))});if(point.age===selectedVictronAge){let top=scale.y((point.bulk||0)+(point.abs||0)+(point.float||0),frame);ctx.strokeStyle='#ffe9c8';ctx.strokeRect(x-barWidth/2-1,top-1,barWidth+2,Math.max(2,bottom-top+2))}hits.push({x,html:chartTip(victronAgeLabel(point.age),['Bulk: '+fmtMinutes(point.bulk),'Absorption: '+fmtMinutes(point.abs),'Float: '+fmtMinutes(point.float)])})});drawDayLabels(frame,points);setChartHits('vh-stages',hits,step);
+}
+function intradaySlots(){let slots=Array.from({length:48},(_,slot)=>({slot}));(VI.samples||[]).forEach(sample=>{if(sample.slot>=0&&sample.slot<48)Object.assign(slots[sample.slot],sample)});slots.forEach(sample=>{if(Number.isFinite(sample.pvW))sample.yieldWh=sample.pvW*.5});return slots}
+function trendDateLabel(date){let value=String(date||'');if(value.length!==8)return victronAgeLabel(selectedVictronAge);let d=new Date(Number(value.slice(0,4)),Number(value.slice(4,6))-1,Number(value.slice(6,8)));return d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'})}
+function drawIntradayCombo(id,barKey,lineKey,barColor,lineColor,barDigits,lineDigits){
+  let points=intradaySlots(),barValues=barKey?points.map(point=>point[barKey]).filter(Number.isFinite):[],lineValues=lineKey?points.map(point=>point[lineKey]).filter(Number.isFinite):[];
+  if(!barValues.length&&!lineValues.length){chartEmpty(id,230,'No stored samples for this chart');return}
+  let secondary=barValues.length&&lineValues.length?chartScale(lineValues,false):null,frame=chartSetup(id,230,48,!!secondary),ctx=frame.ctx,primaryValues=barValues.length?barValues:lineValues,primary=chartScale(primaryValues,!!barValues.length);drawChartGrid(frame,primary,barValues.length?barDigits:lineDigits,secondary,lineDigits);
+  let step=frame.plotW/48,bottom=frame.top+frame.plotH,hits=[];
+  if(barValues.length){let width=Math.max(3,step*.68);points.forEach((point,index)=>{if(!Number.isFinite(point[barKey]))return;let y=primary.y(point[barKey],frame),x=step*(index+.5);ctx.fillStyle=barColor;ctx.fillRect(x-width/2,y,width,Math.max(1,bottom-y))})}
+  if(lineValues.length){let scale=secondary||primary,started=false;ctx.strokeStyle=lineColor;ctx.lineWidth=2;ctx.beginPath();points.forEach((point,index)=>{if(!Number.isFinite(point[lineKey])){started=false;return}let x=step*(index+.5),y=scale.y(point[lineKey],frame);if(!started){ctx.moveTo(x,y);started=true}else ctx.lineTo(x,y)});ctx.stroke();points.forEach((point,index)=>{if(!Number.isFinite(point[lineKey]))return;let x=step*(index+.5),y=scale.y(point[lineKey],frame);ctx.fillStyle=lineColor;ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill()})}
+  points.forEach((point,index)=>{let rows=[];if(barKey&&Number.isFinite(point[barKey]))rows.push(chartValue(barKey,point[barKey],barDigits));if(lineKey&&Number.isFinite(point[lineKey]))rows.push(chartValue(lineKey,point[lineKey],lineDigits));if(rows.length)hits.push({x:step*(index+.5),html:chartTip(String(Math.floor(index/2)).padStart(2,'0')+':'+(index%2?'30':'00'),rows)})});
+  ctx.fillStyle='#8a7c63';ctx.font='9px system-ui';ctx.textAlign='center';for(let slot=0;slot<48;slot+=6)ctx.fillText(String(Math.floor(slot/2)).padStart(2,'0')+':00',step*(slot+.5),frame.height-8);ctx.textAlign='start';setChartHits(id,hits,step);
+}
+function drawVictronIntraday(){
+  let samples=(VI.samples||[]),status=$('vi-status'),stats=$('vi-stats'),title=$('vi-title'),csv=$('vi-csv-day'),tempPanel=$('vi-temp-panel'),hasTemp=samples.some(sample=>Number.isFinite(sample.tempC));if(title)title.textContent=trendDateLabel(VI.date);if(csv)csv.href='/api/victron/trends.csv?age='+selectedVictronAge;if(tempPanel)tempPanel.style.display=hasTemp?'':'none';
+  if(!samples.length){if(status)status.textContent='no stored samples for this day';if(stats)stats.innerHTML='<div class="micro">The charger has not stored this day yet.</div>';['vi-yield','vi-solar','vi-charge','vi-output'].forEach(id=>chartEmpty(id,230,'No stored trend data'));return}
+  let finite=(key)=>samples.map(sample=>sample[key]).filter(Number.isFinite),sum=(values)=>values.reduce((a,b)=>a+b,0),range=(values,digits,unit)=>values.length?(Math.min(...values).toFixed(digits)+' to '+Math.max(...values).toFixed(digits)+unit):'--',stat=(label,value)=>`<div class=vh-stat><span>${label}</span><b>${value}</b></div>`;
+  let pv=finite('pvW'),pvV=finite('pvV'),battV=finite('battV'),charge=finite('chargeA'),output=finite('outA');if(status)status.textContent=samples.length+' of 48 half-hour bins';if(stats)stats.innerHTML=stat('Intraday yield',Math.round(sum(pv)*.5)+' Wh')+stat('Peak PV power',pv.length?Math.max(...pv).toFixed(0)+' W':'--')+stat('PV voltage',range(pvV,1,' V'))+stat('Battery voltage',range(battV,2,' V'))+stat('Maximum charge current',charge.length?Math.max(...charge).toFixed(1)+' A':'--')+stat('Maximum output current',output.length?Math.max(...output).toFixed(1)+' A':'--');
+  drawIntradayCombo('vi-yield','yieldWh','battV','#f5a332','#ff6656',0,2);drawIntradayCombo('vi-solar','pvW','pvV','#f4791f','#e3bc4f',0,1);drawIntradayCombo('vi-charge','chargeA','battV','#77b86a','#6aaed6',1,2);drawIntradayCombo('vi-output','outA',null,'#9b7bc8','#9b7bc8',1,1);if(hasTemp)drawIntradayCombo('vi-temp',null,'tempC','#d9bd55','#d9bd55',1,1);
 }
 function renderVictronDay(days){
   let day=days.find(point=>point.age===selectedVictronAge)||(days.find(point=>point.age===0)||days[days.length-1]);if(!day){$('vh-daytitle').textContent='Daily details';$('vh-daystats').innerHTML='<div class="micro">Waiting for charger history</div>';$('vh-errors').textContent='Error history waiting';return}
@@ -675,7 +816,8 @@ function drawVictronDetail(){
   days.forEach(d=>{let tot=(d.bulk||0)+(d.abs||0)+(d.float||0);
     let inner=tot?(seg(d.float||0,tot,'#6aaed6')+seg(d.abs||0,tot,'#e3bc4f')+seg(d.bulk||0,tot,'#f4791f')):'<div class="seg" style="height:100%;background:#5b4933"></div>';
     let sel=d.age===selectedVictronAge?' sel':'';
-    h+='<div class="barcell'+sel+'" onclick="selectVictronDay('+d.age+')"><div class="bar" style="height:'+((d.yield||0)/maxY*100).toFixed(1)+'%">'+inner+'</div></div>';});
+    let hover=victronAgeLabel(d.age)+' — Yield '+fmtWh(d.yield)+', peak '+fmt(d.peak,0,' W')+', bulk '+fmtMinutes(d.bulk)+', absorption '+fmtMinutes(d.abs)+', float '+fmtMinutes(d.float);
+    h+='<div class="barcell'+sel+'" title="'+hover+'" onclick="selectVictronDay('+d.age+')"><div class="bar" style="height:'+((d.yield||0)/maxY*100).toFixed(1)+'%">'+inner+'</div></div>';});
   h+='<div class="lbl"></div>';days.forEach(d=>{let sel=d.age===selectedVictronAge?' sel':'';h+='<div class="hd'+sel+'" onclick="selectVictronDay('+d.age+')">'+victronShortAge(d.age)+'</div>'});
   h+='<div class="grouphd">Solar panel</div>';
   h+='<div class="lbl">Yield</div>';days.forEach(d=>{h+='<div class="cell">'+fmtWh(d.yield)+'</div>'});
@@ -694,8 +836,9 @@ function drawVictronHistory(){
   drawMetricBars('vh-consumed','consumed',VH_COLORS.consumed,2);drawMetricBars('vh-peak','peak',VH_COLORS.peak,0);drawMetricBars('vh-pvmax','pvmax',VH_COLORS.pvmax,1);drawBatteryRange();drawMetricBars('vh-imax','imax',VH_COLORS.imax,1);drawStageBars();
   let status=$('vhist-status');
   if(status)status.textContent=days.length?(days.length+' charger day'+(days.length===1?'':'s')+' available'):'waiting for the first connected read';
+  drawVictronIntraday();
 }
-function selectVictronDay(age){selectedVictronAge=age;drawVictronHistory();}
+function selectVictronDay(age){selectedVictronAge=age;drawVictronHistory();loadVictronDay(age)}
 function initSelects(){
   if(themeInit||!S.themes)return;
   $('s-theme').innerHTML=S.themes.map((n,i)=>`<option value=${i}>${n}</option>`).join('');
@@ -753,7 +896,7 @@ function paint(){
     $('p-pva').textContent=(S.sol.pv!=null&&S.sol.pvV>0.5)?fmt(S.sol.pv/S.sol.pvV,1,' A'):'--';
     $('p-pvmax').textContent=fmt(S.sol.peakToday,0,' W');
     $('p-pvmaxy').textContent=fmt(S.sol.peakYest,0,' W');
-    $('p-stemp').textContent=S.sol.battTemp!=null?fmt(S.sol.battTemp,1,' °C'):'--';
+    let hasSolarTemp=S.sol.battTemp!=null;if($('p-stemp-row'))$('p-stemp-row').style.display=hasSolarTemp?'':'none';$('p-stemp').textContent=hasSolarTemp?fmt(S.sol.battTemp,1,' °C'):'--';
     $('p-ydy').textContent=fmt(S.sol.yieldYest,2,' kWh');
     $('p-pvmonth').textContent=fmt(S.sol.monthPeak,0,' W');
     $('p-pct').textContent=S.sol.monthPct!=null?Math.round(S.sol.monthPct)+'%':'--';
@@ -797,6 +940,34 @@ function paint(){
   if(S.ble&&document.activeElement!==$('v-pin')){$('v-pin').value='';$('v-pin').placeholder=S.ble.vPinSet?'PIN saved (enter to replace)':'6 digits from device label'}
   if(S.ble&&document.activeElement!==$('g-mac'))$('g-mac').value=S.ble.gMac||'';
   if(S.ble)$('b-en').checked=!!S.ble.en;
+  if(S.ble){
+    let show=!!(S.ble.vsBattFresh&&S.ble.vsSolFresh);
+    $('vs-card').style.display=show?'':'none';
+    // Only fill a settings field from server state while it is empty and not
+    // focused, so a value being typed (or edited) is never wiped by a poll.
+    if(document.activeElement!==$('vs-name')&&!$('vs-name').value)$('vs-name').value=S.ble.vsName||'';
+    if(document.activeElement!==$('vs-id')&&!$('vs-id').value)$('vs-id').value=S.ble.vsId||'';
+    if(document.activeElement!==$('vs-key')){$('vs-key').value='';$('vs-key').placeholder=S.ble.vsKeySet?'key saved (enter to replace)':'32 hex digits';}
+    $('vs-en').checked=!!S.ble.vsEnabled;
+    $('vs-status').innerHTML=S.ble.vsBroadcasting?'<span class=ok>broadcasting</span>':(S.ble.vsEnabled?(S.ble.vsKeySet?'paused':'paused (no key)'):'off');
+    $('vs-srcv').textContent=(S.ble.vsSrcV!=null)?S.ble.vsSrcV.toFixed(2)+' V':'--';
+    $('vs-srct').textContent=(S.ble.vsSrcT!=null)?S.ble.vsSrcT.toFixed(1)+' °C':'--';
+    $('vs-srci').textContent=(S.ble.vsSrcA!=null)?((S.ble.vsSrcA>=0?'+':'')+S.ble.vsSrcA.toFixed(1)+' A'):'--';
+    let cs;
+    if(!S.ble.vsChargerRead)cs='not read yet';
+    else if(!S.ble.vsChargerIdOk)cs='<span class=bad>no VE.Smart network on charger</span>';
+    else cs=(S.ble.vsChargerName||'network')+' ['+(S.ble.vsChargerId||'')+'] &middot; key '+(S.ble.vsChargerKeyReadable?'<span class=ok>readable</span>':'<span class=bad>not readable</span>');
+    $('vs-charger').innerHTML=cs;
+    let tx=S.ble.vsChargerTxVregs,rx=S.ble.vsChargerRxVregs,vr=S.ble.vsChargerRssi;
+    $('vs-traffic').textContent=(tx==null&&rx==null)?'not available':('TX VREGs '+(tx==null?'?':tx)+' · RX VREGs '+(rx==null?'?':rx)+(vr==null?'':' · RSSI '+vr+' dBm'));
+    let range=S.ble.vsChargerInRangeCount,seen=S.ble.vsChargerEmulatorSeen;
+    if(range==null)$('vs-seen').textContent='not available';
+    else if(seen)$('vs-seen').innerHTML='<span class=ok>yes</span> · '+S.ble.vsChargerEmulatorAge+'s ago · product 0x'+Number(S.ble.vsChargerEmulatorProduct).toString(16).padStart(4,'0');
+    else $('vs-seen').innerHTML='<span class=bad>no</span> · '+range+' device'+(range===1?'':'s')+' in range including charger';
+    let av=S.ble.vsChargerVoltageAccepted,at=S.ble.vsChargerTempAccepted,ai=S.ble.vsChargerCurrentAccepted;
+    if(!S.ble.vsChargerRxStatusReadable)$('vs-accepted').textContent='not available';
+    else $('vs-accepted').innerHTML='Vsense '+(av?'<span class=ok>yes</span>':'<span class=bad>no</span>')+' · Tsense '+(at?'<span class=ok>yes</span>':'<span class=bad>no</span>')+' · Isense '+(ai?'<span class=ok>yes</span>':'<span class=bad>no</span>');
+  }
   // Firmware
   $('f-ver').textContent=S.fw||'--';
   $('f-heap').textContent=S.sys&&S.sys.heap?(S.sys.heap/1024).toFixed(0)+' KB':'--';
@@ -921,6 +1092,8 @@ function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'applic
 function sp(d){S.th.sp=Math.max(45,Math.min(90,(S.th.sp|0)+d));$('d-set').textContent=S.th.sp;saveAll()}
 function saveHost(){post('/api/hostname','name='+encodeURIComponent($('nt-host').value)).then(()=>setTimeout(load,500))}
 function saveBle(){post('/api/ble','bMac='+encodeURIComponent($('b-mac').value)+'&vMac='+encodeURIComponent($('v-mac').value)+'&vKey='+encodeURIComponent($('v-key').value)+'&vPin='+encodeURIComponent($('v-pin').value)+'&gMac='+encodeURIComponent($('g-mac').value)+'&en='+($('b-en').checked?1:0)).then(()=>setTimeout(load,300))}
+function saveVs(){post('/api/vs','name='+encodeURIComponent($('vs-name').value)+'&id='+encodeURIComponent($('vs-id').value)+'&key='+encodeURIComponent($('vs-key').value)+'&en='+($('vs-en').checked?1:0)).then(()=>setTimeout(load,300))}
+function readVs(){$('vs-charger').textContent='reading from charger…';post('/api/vs/read','').then(()=>{let n=0,t=setInterval(function(){load();if(++n>18)clearInterval(t)},2000)})}
 function clearAccent(){post('/api/settings','wAcc=').then(()=>setTimeout(load,200))}
 function saveAll(){
   let s=S.set||{};
@@ -1102,6 +1275,48 @@ static void handleState() {
   ble["vPinSet"] = isVictronPin(gSettings.victronPin);
   ble["gMac"] = gSettings.gidroxMac;
   ble["en"] = gSettings.bleEnabled;
+  // VE.Smart external-sense emulator (settings + live broadcast status). The
+  // network key is never returned; only a keySet flag.
+  ble["vsEnabled"] = gSettings.vsEnabled;
+  ble["vsId"] = gSettings.vsNetId;
+  ble["vsName"] = gSettings.vsNetName;
+  ble["vsKeySet"] = gSettings.vsNetKey.length() == 32;
+  {
+    ble::VsStatus vs;
+    ble::vsStatus(vs);
+    ble["vsBattFresh"] = vs.battFresh;
+    ble["vsSolFresh"] = vs.solFresh;
+    ble["vsBroadcasting"] = vs.broadcasting;
+    if (!isnan(vs.srcVolts)) ble["vsSrcV"] = vs.srcVolts;
+    if (!isnan(vs.srcTempC)) ble["vsSrcT"] = vs.srcTempC;
+    if (!isnan(vs.srcAmps)) ble["vsSrcA"] = vs.srcAmps;
+    ble["vsChargerRead"] = vs.chargerRead;
+    ble["vsChargerIdOk"] = vs.chargerIdOk;
+    ble["vsChargerKeyReadable"] = vs.chargerKeyReadable;
+    if (vs.chargerTxVregsReadable) ble["vsChargerTxVregs"] = vs.chargerTxVregs;
+    if (vs.chargerRxVregsReadable) ble["vsChargerRxVregs"] = vs.chargerRxVregs;
+    if (vs.chargerRssiReadable) ble["vsChargerRssi"] = vs.chargerRssi;
+    if (vs.chargerInRangeReadable) ble["vsChargerInRangeCount"] = vs.chargerInRangeCount;
+    ble["vsChargerEmulatorSeen"] = vs.chargerEmulatorSeen;
+    if (vs.chargerEmulatorSeen) {
+      ble["vsChargerEmulatorAge"] = vs.chargerEmulatorAge;
+      ble["vsChargerEmulatorProduct"] = vs.chargerEmulatorProduct;
+      ble["vsChargerEmulatorVersion"] = vs.chargerEmulatorVersion;
+    }
+    ble["vsChargerRxStatusReadable"] = vs.chargerRxStatusReadable;
+    ble["vsChargerVoltageAccepted"] = vs.chargerVoltageAccepted;
+    ble["vsChargerTempAccepted"] = vs.chargerTempAccepted;
+    ble["vsChargerCurrentAccepted"] = vs.chargerCurrentAccepted;
+    if (vs.chargerSenseVoltageReadable) ble["vsChargerSenseVoltage"] = vs.chargerSenseVoltage;
+    if (vs.chargerSenseTempReadable) ble["vsChargerSenseTempC"] = vs.chargerSenseTempC;
+    if (vs.chargerSenseCurrentReadable) ble["vsChargerSenseCurrentA"] = vs.chargerSenseCurrentA;
+    if (vs.chargerIdOk) {
+      char idHex[5];
+      snprintf(idHex, sizeof(idHex), "%02x%02x", vs.chargerId & 0xFF, (vs.chargerId >> 8) & 0xFF);
+      ble["vsChargerId"] = String(idHex);
+    }
+    if (vs.chargerName[0]) ble["vsChargerName"] = String(vs.chargerName);
+  }
   auto themes = d["themes"].to<JsonArray>();
   for (size_t i = 0; i < HUCK_THEME_COUNT; i++) themes.add(HUCK_THEMES[i].name);
   auto bgs = d["bgs"].to<JsonArray>();
@@ -1168,6 +1383,57 @@ static void handleVictronHistory() {
       output += static_cast<unsigned int>(day.errors[errorIndex]);
     }
     output += ']';
+    output += ",\"intraday\":";
+    output += victronTrendHasDayByAge(day.ageDays) ? "true" : "false";
+    output += '}';
+    server.sendContent(output);
+  }
+  server.sendContent("]}");
+  server.sendContent("");
+}
+
+static void handleVictronDay() {
+  int requestedAge = server.hasArg("age") ? server.arg("age").toInt() : 0;
+  if (requestedAge < 0 || requestedAge >= static_cast<int>(HUCK_VICTRON_HISTORY_DAYS)) {
+    server.send(400, "application/json", "{\"error\":\"age must be 0 through 30\"}");
+    return;
+  }
+  VictronIntradayDay day;
+  bool hasDay = victronTrendReadDayByAge(static_cast<uint8_t>(requestedAge), day);
+  uint32_t availableMask = victronTrendAvailableAgeMask();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", "");
+  String prefix = "{\"age\":" + String(requestedAge) +
+                  ",\"date\":" + String(hasDay ? day.dateKey : 0) +
+                  ",\"intervalSeconds\":1800,\"availableAges\":[";
+  bool firstAge = true;
+  for (uint8_t age = 0; age < HUCK_VICTRON_HISTORY_DAYS; age++) {
+    if (!(availableMask & (1UL << age))) continue;
+    if (!firstAge) prefix += ',';
+    firstAge = false;
+    prefix += age;
+  }
+  prefix += "],\"samples\":[";
+  server.sendContent(prefix);
+  bool first = true;
+  for (size_t slot = 0; hasDay && slot < HUCK_VICTRON_INTRADAY_SLOTS; slot++) {
+    const VictronIntradaySample& sample = day.samples[slot];
+    if (!sample.validMask) continue;
+    String output;
+    output.reserve(180);
+    if (!first) output += ',';
+    first = false;
+    output += "{\"slot\":";
+    output += slot;
+    output += ",\"ts\":";
+    output += sample.timestampUtc;
+    appendJsonFloat(output, "outA", sample.outputCurrentA);
+    appendJsonFloat(output, "pvV", sample.pvVoltageV);
+    appendJsonFloat(output, "pvW", sample.pvPowerW);
+    appendJsonFloat(output, "tempC", sample.batteryTempC);
+    appendJsonFloat(output, "battV", sample.batteryVoltageV);
+    appendJsonFloat(output, "chargeA", sample.chargeCurrentA);
     output += '}';
     server.sendContent(output);
   }
@@ -1204,6 +1470,64 @@ static void handleVictronHistoryCsv() {
     for (size_t e = 0; e < 4; e++) { row += ','; row += static_cast<unsigned int>(day.errors[e]); }
     row += "\r\n";
     server.sendContent(row);
+  }
+  server.sendContent("");
+}
+
+static void appendCsvTrendValue(String& row, bool valid, float value, uint8_t digits) {
+  row += ',';
+  if (valid && !isnan(value)) row += String(value, static_cast<unsigned int>(digits));
+}
+
+// Stream one selected day (?age=0..30) or every stored day when age is omitted.
+static void handleVictronTrendsCsv() {
+  bool selectedDay = server.hasArg("age");
+  int requestedAge = selectedDay ? server.arg("age").toInt() : 0;
+  if (requestedAge < 0 || requestedAge >= static_cast<int>(HUCK_VICTRON_HISTORY_DAYS)) {
+    server.send(400, "text/plain", "age must be 0 through 30\n");
+    return;
+  }
+  if (selectedDay) {
+    VictronIntradayDay day;
+    if (!victronTrendReadDayByAge(static_cast<uint8_t>(requestedAge), day)) {
+      server.send(404, "text/plain", "no stored trends for that day\n");
+      return;
+    }
+  }
+  String filename = selectedDay
+      ? "attachment; filename=huckleberry_victron_intraday_day_" + String(requestedAge) + ".csv"
+      : "attachment; filename=huckleberry_victron_intraday_all.csv";
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Content-Disposition", filename);
+  server.send(200, "text/csv", "");
+  server.sendContent("age_days,date_local,slot,sample_time_utc,valid_mask,output_current_a,"
+                     "pv_voltage_v,pv_power_w,battery_temp_c,battery_voltage_v,"
+                     "charge_current_a,source_interval_seconds\r\n");
+  uint8_t firstAge = selectedDay ? static_cast<uint8_t>(requestedAge) : 0;
+  uint8_t lastAge = selectedDay ? firstAge : static_cast<uint8_t>(HUCK_VICTRON_HISTORY_DAYS - 1);
+  for (uint8_t age = firstAge; age <= lastAge; age++) {
+    VictronIntradayDay day;
+    if (!victronTrendReadDayByAge(age, day)) continue;
+    for (size_t slot = 0; slot < HUCK_VICTRON_INTRADAY_SLOTS; slot++) {
+      const VictronIntradaySample& sample = day.samples[slot];
+      if (!sample.validMask) continue;
+      String row;
+      row.reserve(150);
+      row += static_cast<unsigned int>(age); row += ',';
+      row += day.dateKey; row += ',';
+      row += slot; row += ',';
+      row += sample.timestampUtc; row += ',';
+      row += static_cast<unsigned int>(sample.validMask);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_OUTPUT_CURRENT), sample.outputCurrentA, 1);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_PV_VOLTAGE), sample.pvVoltageV, 2);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_PV_POWER), sample.pvPowerW, 0);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_BATTERY_TEMP), sample.batteryTempC, 1);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_BATTERY_VOLTAGE), sample.batteryVoltageV, 2);
+      appendCsvTrendValue(row, sample.validMask & (1U << VICTRON_TREND_CHARGE_CURRENT), sample.chargeCurrentA, 1);
+      row += ",1800\r\n";
+      server.sendContent(row);
+    }
   }
   server.sendContent("");
 }
@@ -1394,6 +1718,43 @@ static void handleBle() {
   server.send(200, "text/plain", "ok");
 }
 
+// VE.Smart external-sense emulator settings. Validates all inputs server-side and
+// never accepts a malformed ID/key. A blank key preserves the saved one.
+static void handleVs() {
+  if (server.hasArg("name")) gSettings.vsNetName = server.arg("name").substring(0, 30);
+  if (server.hasArg("id")) {
+    String id = server.arg("id");
+    id.trim();
+    if (id.length()) {
+      if (!isHexExact(id, 4)) {
+        server.send(400, "text/plain", "Network ID must be exactly 4 hex digits");
+        return;
+      }
+      gSettings.vsNetId = id;
+    }
+  }
+  if (server.hasArg("key")) {
+    String key = server.arg("key");
+    key.trim();
+    if (key.length()) {  // blank preserves the saved key
+      if (!isHexExact(key, 32)) {
+        server.send(400, "text/plain", "Network key must be exactly 32 hex digits");
+        return;
+      }
+      gSettings.vsNetKey = key;
+    }
+  }
+  if (server.hasArg("en")) gSettings.vsEnabled = server.arg("en").toInt() != 0;
+  // Assign a stable sender address once, so the charger sees one consistent
+  // VE.Smart source. Derived from the device MAC; persisted so it never changes.
+  if (gSettings.vsSourceAddr == 0) {
+    uint32_t src = (uint32_t)ESP.getEfuseMac();
+    gSettings.vsSourceAddr = src ? src : 0xA3A50001u;
+  }
+  gSettings.save();
+  server.send(200, "text/plain", "ok");
+}
+
 static void handleWifiAdd() {
   String ssid = server.arg("ssid");
   if (ssid.length()) {
@@ -1474,7 +1835,9 @@ void begin() {
   server.on("/", HTTP_GET, [] { server.send_P(200, "text/html", PAGE); });
   server.on("/api/state", HTTP_GET, handleState);
   server.on("/api/victron/history", HTTP_GET, handleVictronHistory);
+  server.on("/api/victron/day", HTTP_GET, handleVictronDay);
   server.on("/api/victron/history.csv", HTTP_GET, handleVictronHistoryCsv);
+  server.on("/api/victron/trends.csv", HTTP_GET, handleVictronTrendsCsv);
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/reset", HTTP_POST, handleReset);
   server.on("/api/presets", HTTP_GET, handlePresetsList);
@@ -1483,6 +1846,11 @@ void begin() {
   server.on("/api/preset/delete", HTTP_POST, handlePresetDelete);
   server.on("/api/hostname", HTTP_POST, handleHostname);
   server.on("/api/ble", HTTP_POST, handleBle);
+  server.on("/api/vs", HTTP_POST, handleVs);
+  server.on("/api/vs/read", HTTP_POST, [] {
+    ble::requestChargerNetworkRead();
+    server.send(200, "application/json", "{\"queued\":true}");
+  });
   server.on("/api/wifi/add", HTTP_POST, handleWifiAdd);
   server.on("/api/wifi/remove", HTTP_POST, handleWifiRemove);
   server.on("/api/time", HTTP_POST, handleTime);

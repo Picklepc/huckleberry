@@ -21,7 +21,10 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
               -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
 Register-ScheduledTask -TaskName 'VictronCollector' -Action $action -Trigger $trigger `
-    -Settings $settings -Description 'Polls ESP32 Victron devices into SQL Server Express' -Force
+    -Settings $settings -Description 'Copies charger-stored Victron history into SQL Server Express' `
+    -Force -ErrorAction Stop | Out-Null
+
+Get-ScheduledTask -TaskName 'VictronCollector' -ErrorAction Stop | Out-Null
 
 Write-Host "Registered scheduled task 'VictronCollector' (runs collector loop at logon)."
 Write-Host "Start it now with:  Start-ScheduledTask -TaskName VictronCollector"

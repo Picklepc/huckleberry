@@ -12,6 +12,7 @@ backups/*.bin
 # Local handoff/snapshot artifacts
 *-Chaffee.*
 logs/
+scratchpad/
 
 # Editor / OS
 .vscode/.browse.c_cpp.db*
